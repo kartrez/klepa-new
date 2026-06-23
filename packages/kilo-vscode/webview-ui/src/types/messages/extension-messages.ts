@@ -303,6 +303,23 @@ export interface DeviceAuthCancelledMessage {
   type: "deviceAuthCancelled"
 }
 
+export interface AuthCompleteMessage {
+  type: "authComplete"
+}
+
+export interface AuthFailedMessage {
+  type: "authFailed"
+  error: string
+}
+
+export interface AuthLoggedOutMessage {
+  type: "authLoggedOut"
+}
+
+export interface AuthStartedMessage {
+  type: "authStarted"
+}
+
 export interface NavigateMessage {
   type: "navigate"
   view: "newTask" | "marketplace" | "history" | "profile" | "settings" | "subAgentViewer"
@@ -999,6 +1016,10 @@ export type ExtensionMessage =
   | DeviceAuthCompleteMessage
   | DeviceAuthFailedMessage
   | DeviceAuthCancelledMessage
+  | AuthCompleteMessage
+  | AuthFailedMessage
+  | AuthLoggedOutMessage
+  | AuthStartedMessage
   | NavigateMessage
   | IndexingStatusLoadedMessage
   | IndexingSettingsLoadedMessage

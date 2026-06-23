@@ -110,6 +110,13 @@ import {
   type AuthContext,
 } from "./kilo-provider/handlers/auth"
 import {
+  completeTelegramAuth,
+  isAuthCallbackPath,
+  parseAuthCallback,
+  saveToken,
+  startTelegramAuth,
+} from "./kilo-provider/handlers/gpt-chat-by-auth"
+import {
   handleRequestCloudSessions,
   handleRequestCloudSessionData,
   handleImportAndSend,
@@ -128,6 +135,7 @@ import {
 import { fetchAndSendPendingSuggestions } from "./kilo-provider/handlers/suggestion"
 import { nativeTitle } from "./kilo-provider/native-tab-title"
 import { parseReview, reviewMetadata, type ReviewMessageData } from "./shared/review-comments"
+import { configFeatures } from "./features"
 
 import {
   buildActionContext,
@@ -145,7 +153,7 @@ import {
 import type { StoredProviderKey } from "./provider-actions"
 import { fetchOpenAIModels, FetchModelsError } from "./shared/fetch-models"
 import type { Agent } from "@kilocode/sdk/v2/client"
-import { configFeatures } from "./features"
+import { EXTENSION_ID } from "./shared/gpt-chat-by"
 import { createAutoApproveBridge } from "./kilo-provider/auto-approve"
 import type { KiloProviderOptions } from "./kilo-provider/options"
 import { fetchKiloEmbeddingModelCatalog } from "@kilocode/kilo-gateway"
@@ -296,7 +304,7 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
   private loginAttempt = 0
   private isWebviewReady = false
   private readonly extensionVersion =
-    vscode.extensions.getExtension("kilocode.kilo-code")?.packageJSON?.version ?? "unknown"
+    vscode.extensions.getExtension(EXTENSION_ID)?.packageJSON?.version ?? "unknown"
   private cachedProvidersMessage: unknown = null
   /**
    * Provider API keys retained extension-side for authenticated model
@@ -949,6 +957,12 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
           break
         case "loadSessions":
           this.handleLoadSessions().catch((e) => console.error("[Kilo New] handleLoadSessions failed:", e))
+          break
+        case "gptChatByTelegramLogin":
+          await this.handleGptChatByTelegramLogin()
+          break
+        case "gptChatByTokenLogin":
+          if (typeof message.token === "string") await this.handleGptChatByTokenLogin(message.token)
           break
         case "login": {
           const attempt = ++this.loginAttempt
@@ -2980,6 +2994,78 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
     }
   }
 
+  async handleGptChatByAuthCallback(uri: vscode.Uri): Promise<void> {
+    console.log("[Kilo New] Auth callback URI:", uri.toString())
+    const { token, state } = parseAuthCallback(uri)
+    if (!token) {
+      this.postMessage({ type: "authFailed", error: "Missing token in auth callback" })
+      return
+    }
+    if (!this.client) {
+      this.postMessage({ type: "authFailed", error: "Not connected to CLI backend" })
+      return
+    }
+
+    if (state) completeTelegramAuth(state, token)
+
+    try {
+      await this.finishGptChatByAuth(token)
+    } catch (error) {
+      this.postMessage({
+        type: "authFailed",
+        error: getErrorMessage(error) || "Login failed",
+      })
+    }
+  }
+
+  private async handleGptChatByTokenLogin(token: string) {
+    if (!this.client) {
+      this.postMessage({ type: "authFailed", error: "Not connected to CLI backend" })
+      return
+    }
+
+    const key = token.trim()
+    if (!key) {
+      this.postMessage({ type: "authFailed", error: "API key is required" })
+      return
+    }
+
+    this.postMessage({ type: "authStarted" })
+    try {
+      await this.finishGptChatByAuth(key)
+    } catch (error) {
+      this.postMessage({
+        type: "authFailed",
+        error: getErrorMessage(error) || "Login failed",
+      })
+    }
+  }
+
+  private async finishGptChatByAuth(token: string) {
+    if (!this.client) return
+    await saveToken(this.client, token)
+    await this.disposeGlobal()
+    await this.fetchAndSendProviders()
+    this.postMessage({ type: "authComplete" })
+  }
+
+  private async handleGptChatByTelegramLogin(): Promise<void> {
+    if (!this.client) return
+
+    this.postMessage({ type: "authStarted" })
+    try {
+      const token = await startTelegramAuth((url) => {
+        void vscode.env.openExternal(vscode.Uri.parse(url))
+      })
+      await this.finishGptChatByAuth(token)
+    } catch (error) {
+      this.postMessage({
+        type: "authFailed",
+        error: getErrorMessage(error) || "Login failed",
+      })
+    }
+  }
+
   private async disposeGlobal(): Promise<void> {
     if (!this.client) return
 
@@ -3035,7 +3121,7 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
     if (confirmed !== "Reset") return
 
     const prefix = "kilo-code.new."
-    const ext = vscode.extensions.getExtension("kilocode.kilo-code")
+    const ext = vscode.extensions.getExtension(EXTENSION_ID)
     const properties = ext?.packageJSON?.contributes?.configuration?.properties as Record<string, unknown> | undefined
     if (!properties) return
 

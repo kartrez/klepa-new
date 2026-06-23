@@ -9,6 +9,7 @@ import {
   sanitizeCustomProviderConfig,
   withCustomProviderDeletions,
 } from "./shared/custom-provider"
+import { GPT_CHAT_BY_PROVIDER_ID } from "./shared/gpt-chat-by"
 import { isCustomProviderPackage, KILO_AUTO, KILO_PROVIDER_ID, parseModelString } from "./shared/provider-model"
 import { configFeatures } from "./features"
 
@@ -90,6 +91,9 @@ export async function fetchProviderData(client: KiloClient, dir: string) {
   })
   delete authStates[KILO_PROVIDER_ID]
   if (kiloAuth) authStates[KILO_PROVIDER_ID] = kiloAuth
+  if (response.connected.includes(GPT_CHAT_BY_PROVIDER_ID) || response.connected.includes("gpt-chat-by")) {
+    authStates[GPT_CHAT_BY_PROVIDER_ID] = "api"
+  }
   return { response: { ...response, all }, authMethods, authStates, storedKeys }
 }
 

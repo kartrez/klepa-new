@@ -23,6 +23,8 @@ import { SessionProvider, useSession } from "./context/session"
 import { LanguageBridge } from "./context/language-bridge"
 import { ChatView } from "./components/chat"
 import { SidebarEmptyState } from "./components/chat/SidebarEmptyState"
+import GptChatByAuthScreen from "./components/auth/GptChatByAuthScreen"
+import { GPT_CHAT_BY_PROVIDER_ID } from "../../src/shared/gpt-chat-by"
 import { registerExpandedTaskTool } from "./components/chat/TaskToolExpanded"
 import { registerVscodeToolOverrides } from "./components/chat/VscodeToolOverrides"
 
@@ -204,6 +206,7 @@ const AppContent: Component = () => {
   const [migrationSource, setMigrationSource] = createSignal<"legacy" | "roo">("legacy")
   const session = useSession()
   const server = useServer()
+  const provider = useProvider()
   const vscode = useVSCode()
 
   const handleViewAction = (action: string) => {
@@ -300,8 +303,18 @@ const AppContent: Component = () => {
     <SidebarEmptyState onSelectSession={handleSelectSession} onShowHistory={() => setCurrentView("history")} />
   )
 
+  const authed = createMemo(
+    () => server.gptAuthed() || provider.authStates()[GPT_CHAT_BY_PROVIDER_ID] !== undefined,
+  )
+
   return (
     <div class="container">
+      <Show
+        when={authed()}
+        fallback={
+          <GptChatByAuthScreen busy={server.authBusy()} error={server.authError()} />
+        }
+      >
       {/* legacy-migration start — state-driven overlay, independent of currentView */}
       <Show
         when={migrationNeeded()}
@@ -359,6 +372,7 @@ const AppContent: Component = () => {
         />
       </Show>
       {/* legacy-migration end */}
+      </Show>
     </div>
   )
 }

@@ -116,6 +116,15 @@ export interface LoginRequest {
   type: "login"
 }
 
+export interface GptChatByTelegramLoginRequest {
+  type: "gptChatByTelegramLogin"
+}
+
+export interface GptChatByTokenLoginRequest {
+  type: "gptChatByTokenLogin"
+  token: string
+}
+
 export interface LogoutRequest {
   type: "logout"
 }
@@ -1113,6 +1122,8 @@ export type WebviewMessage =
   | RequestCloudSessionsMessage
   | RequestGitRemoteUrlMessage
   | LoginRequest
+  | GptChatByTelegramLoginRequest
+  | GptChatByTokenLoginRequest
   | LogoutRequest
   | RefreshProfileRequest
   | OpenExternalRequest

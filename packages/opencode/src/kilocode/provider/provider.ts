@@ -7,6 +7,7 @@
 // calls at well-defined injection points (each marked with kilocode_change).
 
 import { createKilo, type KiloProvider, AI_SDK_PROVIDERS, PROMPTS } from "@kilocode/kilo-gateway"
+import { GPT_CHAT_BY_PROVIDER_ID } from "./gpt-chat-by"
 import { DEFAULT_HEADERS } from "@/kilocode/const"
 import { ProviderID, ModelID } from "@/provider/schema"
 import { optionalOmitUndefined } from "@opencode-ai/core/schema"
@@ -134,6 +135,24 @@ export function kiloCustomLoaders(dep: CustomDep): Record<string, CustomLoader> 
         },
         options: {},
       }),
+
+    [GPT_CHAT_BY_PROVIDER_ID]: Effect.fnUntraced(function* (input: any) {
+      const env = yield* dep.env()
+      const config = yield* dep.config()
+      const auth =
+        (yield* dep.auth(input.id).pipe(Effect.catch(() => Effect.succeed(undefined)))) ??
+        (yield* dep.auth("gpt-chat-by").pipe(Effect.catch(() => Effect.succeed(undefined))))
+      const key =
+        (auth?.type === "api" ? auth.key : undefined) ??
+        config.provider?.[GPT_CHAT_BY_PROVIDER_ID]?.options?.apiKey ??
+        config.provider?.["gpt-chat-by"]?.options?.apiKey ??
+        env.GPT_CHAT_BY_API_KEY
+
+      return {
+        autoload: !!key || Object.keys(input.models).length > 0,
+        options: key ? { apiKey: key } : {},
+      }
+    }),
 
     kilo: Effect.fnUntraced(function* (input: any) {
       const env = yield* dep.env()

@@ -11,6 +11,7 @@
 @import "./banners.css";
 @import "./session-actions.css";
 @import "./welcome.css";
+@import "./gpt-chat-by-auth.css";
 @import "./prompt-input.css";
 @import "./prompt-dropdowns.css";
 @import "./model-selector.css";

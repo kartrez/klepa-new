@@ -17,6 +17,9 @@ interface ServerContextValue {
   isConnected: Accessor<boolean>
   profileData: Accessor<ProfileData | null>
   deviceAuth: Accessor<DeviceAuthState>
+  authBusy: Accessor<boolean>
+  authError: Accessor<string | undefined>
+  gptAuthed: Accessor<boolean>
   startLogin: () => void
   goToLogin: () => void
   vscodeLanguage: Accessor<string | undefined>
@@ -29,6 +32,143 @@ export const ServerContext = createContext<ServerContextValue>()
 
 const initialDeviceAuth: DeviceAuthState = { status: "idle" }
 
+type ServerSignals = {
+  setServerInfo: (value: ServerInfo | undefined) => void
+  setExtensionVersion: (value: string | undefined) => void
+  setConnectionState: (value: ConnectionState) => void
+  setErrorMessage: (value: string | undefined) => void
+  setErrorDetails: (value: string | undefined) => void
+  setVscodeLanguage: (value: string | undefined) => void
+  setLanguageOverride: (value: string | undefined) => void
+  setWorkspaceDirectory: (value: string) => void
+  setProfileData: (value: ProfileData | null) => void
+  setDeviceAuth: (value: DeviceAuthState) => void
+  setAuthBusy: (value: boolean) => void
+  setAuthError: (value: string | undefined) => void
+  setGptAuthed: (value: boolean) => void
+}
+
+function handleConnectionMessage(message: ExtensionMessage, signals: ServerSignals) {
+  if (message.type === "ready") {
+    console.log("[Kilo New] Server ready:", message.serverInfo)
+    signals.setServerInfo(message.serverInfo)
+    if (message.extensionVersion) signals.setExtensionVersion(message.extensionVersion)
+    signals.setConnectionState("connected")
+    signals.setErrorMessage(undefined)
+    signals.setErrorDetails(undefined)
+    if (message.vscodeLanguage) signals.setVscodeLanguage(message.vscodeLanguage)
+    if (message.languageOverride) signals.setLanguageOverride(message.languageOverride)
+    if (message.workspaceDirectory) signals.setWorkspaceDirectory(message.workspaceDirectory)
+    return true
+  }
+
+  if (message.type === "workspaceDirectoryChanged") {
+    signals.setWorkspaceDirectory(message.directory)
+    return true
+  }
+
+  if (message.type === "languageChanged") {
+    signals.setLanguageOverride(message.locale || undefined)
+    return true
+  }
+
+  if (message.type === "connectionState") {
+    console.log("[Kilo New] Connection state changed:", message.state)
+    signals.setConnectionState(message.state)
+    if (message.error) {
+      signals.setErrorMessage(message.userMessage ?? message.error)
+      signals.setErrorDetails(message.userDetails ?? message.error)
+    } else if (message.state === "connected") {
+      signals.setErrorMessage(undefined)
+      signals.setErrorDetails(undefined)
+    }
+    return true
+  }
+
+  if (message.type === "error") {
+    console.error("[Kilo New] Server error:", message.message)
+    signals.setErrorMessage(message.message)
+    signals.setErrorDetails(message.message)
+    return true
+  }
+
+  if (message.type === "profileData") {
+    console.log("[Kilo New] Profile data:", message.data ? "received" : "null")
+    signals.setProfileData(message.data)
+    return true
+  }
+
+  return false
+}
+
+function handleDeviceAuthMessage(message: ExtensionMessage, signals: ServerSignals) {
+  if (message.type === "deviceAuthStarted") {
+    console.log("[Kilo New] Device auth started")
+    signals.setDeviceAuth({
+      status: "pending",
+      code: message.code,
+      verificationUrl: message.verificationUrl,
+      expiresIn: message.expiresIn,
+    })
+    return true
+  }
+
+  if (message.type === "deviceAuthComplete") {
+    console.log("[Kilo New] Device auth complete")
+    signals.setDeviceAuth({ status: "success" })
+    setTimeout(() => signals.setDeviceAuth(initialDeviceAuth), 1500)
+    return true
+  }
+
+  if (message.type === "deviceAuthFailed") {
+    console.log("[Kilo New] Device auth failed:", message.error)
+    signals.setDeviceAuth({ status: "error", error: message.error })
+    return true
+  }
+
+  if (message.type === "deviceAuthCancelled") {
+    console.log("[Kilo New] Device auth cancelled")
+    signals.setDeviceAuth(initialDeviceAuth)
+    return true
+  }
+
+  return false
+}
+
+function handleGptAuthMessage(message: ExtensionMessage, signals: ServerSignals) {
+  if (message.type === "authStarted") {
+    signals.setAuthBusy(true)
+    signals.setAuthError(undefined)
+    return true
+  }
+
+  if (message.type === "authComplete") {
+    signals.setAuthBusy(false)
+    signals.setAuthError(undefined)
+    signals.setGptAuthed(true)
+    return true
+  }
+
+  if (message.type === "authFailed") {
+    signals.setAuthBusy(false)
+    signals.setAuthError(message.error)
+    return true
+  }
+
+  if (message.type === "authLoggedOut") {
+    signals.setGptAuthed(false)
+    return true
+  }
+
+  return false
+}
+
+function handleServerMessage(message: ExtensionMessage, signals: ServerSignals) {
+  if (handleConnectionMessage(message, signals)) return
+  if (handleDeviceAuthMessage(message, signals)) return
+  handleGptAuthMessage(message, signals)
+}
+
 export const ServerProvider: ParentComponent = (props) => {
   const vscode = useVSCode()
 
@@ -39,6 +179,9 @@ export const ServerProvider: ParentComponent = (props) => {
   const [errorDetails, setErrorDetails] = createSignal<string | undefined>()
   const [profileData, setProfileData] = createSignal<ProfileData | null>(null)
   const [deviceAuth, setDeviceAuth] = createSignal<DeviceAuthState>(initialDeviceAuth)
+  const [authBusy, setAuthBusy] = createSignal(false)
+  const [authError, setAuthError] = createSignal<string | undefined>()
+  const [gptAuthed, setGptAuthed] = createSignal(false)
   const [vscodeLanguage, setVscodeLanguage] = createSignal<string | undefined>()
   const [languageOverride, setLanguageOverride] = createSignal<string | undefined>()
   const [workspaceDirectory, setWorkspaceDirectory] = createSignal<string>("")
@@ -54,84 +197,24 @@ export const ServerProvider: ParentComponent = (props) => {
   })
 
   onMount(() => {
+    const signals: ServerSignals = {
+      setServerInfo,
+      setExtensionVersion,
+      setConnectionState,
+      setErrorMessage,
+      setErrorDetails,
+      setVscodeLanguage,
+      setLanguageOverride,
+      setWorkspaceDirectory,
+      setProfileData,
+      setDeviceAuth,
+      setAuthBusy,
+      setAuthError,
+      setGptAuthed,
+    }
+
     const unsubscribe = vscode.onMessage((message: ExtensionMessage) => {
-      switch (message.type) {
-        case "ready":
-          console.log("[Kilo New] Server ready:", message.serverInfo)
-          setServerInfo(message.serverInfo)
-          if (message.extensionVersion) setExtensionVersion(message.extensionVersion)
-          setConnectionState("connected")
-          setErrorMessage(undefined)
-          setErrorDetails(undefined)
-          if (message.vscodeLanguage) {
-            setVscodeLanguage(message.vscodeLanguage)
-          }
-          if (message.languageOverride) {
-            setLanguageOverride(message.languageOverride)
-          }
-          if (message.workspaceDirectory) {
-            setWorkspaceDirectory(message.workspaceDirectory)
-          }
-          break
-
-        case "workspaceDirectoryChanged":
-          setWorkspaceDirectory(message.directory)
-          break
-
-        case "languageChanged":
-          setLanguageOverride(message.locale || undefined)
-          break
-
-        case "connectionState":
-          console.log("[Kilo New] Connection state changed:", message.state)
-          setConnectionState(message.state)
-          if (message.error) {
-            setErrorMessage(message.userMessage ?? message.error)
-            setErrorDetails(message.userDetails ?? message.error)
-          } else if (message.state === "connected") {
-            setErrorMessage(undefined)
-            setErrorDetails(undefined)
-          }
-          break
-
-        case "error":
-          console.error("[Kilo New] Server error:", message.message)
-          setErrorMessage(message.message)
-          setErrorDetails(message.message)
-          break
-
-        case "profileData":
-          console.log("[Kilo New] Profile data:", message.data ? "received" : "null")
-          setProfileData(message.data)
-          break
-
-        case "deviceAuthStarted":
-          console.log("[Kilo New] Device auth started")
-          setDeviceAuth({
-            status: "pending",
-            code: message.code,
-            verificationUrl: message.verificationUrl,
-            expiresIn: message.expiresIn,
-          })
-          break
-
-        case "deviceAuthComplete":
-          console.log("[Kilo New] Device auth complete")
-          setDeviceAuth({ status: "success" })
-          // Reset to idle after a short delay
-          setTimeout(() => setDeviceAuth(initialDeviceAuth), 1500)
-          break
-
-        case "deviceAuthFailed":
-          console.log("[Kilo New] Device auth failed:", message.error)
-          setDeviceAuth({ status: "error", error: message.error })
-          break
-
-        case "deviceAuthCancelled":
-          console.log("[Kilo New] Device auth cancelled")
-          setDeviceAuth(initialDeviceAuth)
-          break
-      }
+      handleServerMessage(message, signals)
     })
 
     onCleanup(() => {
@@ -177,6 +260,9 @@ export const ServerProvider: ParentComponent = (props) => {
     isConnected: () => connectionState() === "connected",
     profileData,
     deviceAuth,
+    authBusy,
+    authError,
+    gptAuthed,
     startLogin,
     goToLogin,
     vscodeLanguage,

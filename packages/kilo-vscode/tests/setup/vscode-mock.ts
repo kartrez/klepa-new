@@ -15,7 +15,17 @@ const kind = (value: string): { value: string; append: (part: string) => ReturnT
 const noop = () => {}
 
 const mockUri = {
-  parse: (value: string) => ({ scheme: "https", authority: "", path: value, query: "", fragment: "", fsPath: value }),
+  parse: (value: string) => {
+    const match = /^([^:/?#]+):\/\/([^?#]*)(\?([^#]*))?(#(.*))?$/.exec(value)
+    if (!match) {
+      return { scheme: "https", authority: "", path: value, query: "", fragment: "", fsPath: value }
+    }
+    const [, scheme, rest, , query = "", , fragment = ""] = match
+    const slash = rest.indexOf("/")
+    const authority = slash === -1 ? rest : rest.slice(0, slash)
+    const path = slash === -1 ? "" : rest.slice(slash)
+    return { scheme, authority, path, query, fragment, fsPath: path || authority }
+  },
   file: (path: string) => ({ scheme: "file", authority: "", path, query: "", fragment: "", fsPath: path }),
   joinPath: (base: { fsPath: string }, ...segments: string[]) => {
     const joined = [base.fsPath, ...segments].join("/")
@@ -41,7 +51,9 @@ const mockVscode = {
     machineId: "test-machine",
     isTelemetryEnabled: false,
     shell: "/bin/bash",
+    uriScheme: "vscode",
     openExternal: noop,
+    asExternalUri: async <T>(uri: T) => uri,
   },
   version: "1.90.0",
   workspace: {

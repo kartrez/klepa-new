@@ -1,5 +1,5 @@
 {
-  "name": "kilo-code",
+  "name": "copy-coder",
   "displayName": "Kilo Code: AI Coding Agent, Copilot, and Autocomplete",
   "description": "Open Source AI coding agent that generates code from natural language, automates tasks, and runs terminal commands. Features inline autocomplete, browser automation, automated refactoring, and custom modes for planning, coding, and debugging. Supports 500+ AI models including Claude (Anthropic), Gemini, Grok, GPT, Codex and GLM.",
   "version": "7.3.54",
@@ -8,7 +8,7 @@
     "color": "#FFFFFF",
     "theme": "light"
   },
-  "publisher": "kilocode",
+  "publisher": "copy-code",
   "repository": {
     "type": "git",
     "url": "https://github.com/Kilo-Org/kilocode.git",

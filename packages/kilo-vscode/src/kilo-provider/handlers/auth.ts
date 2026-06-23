@@ -6,6 +6,7 @@
  */
 
 import type { KiloClient } from "@kilocode/sdk/v2/client"
+import { GPT_CHAT_BY_PROVIDER_ID } from "../../shared/gpt-chat-by"
 import { getErrorMessage } from "../../kilo-provider-utils"
 
 export interface AuthContext {
@@ -80,9 +81,10 @@ export async function handleLogout(ctx: AuthContext): Promise<void> {
 
   try {
     console.log("[Kilo New] KiloProvider: 🚪 Logging out...")
-    await ctx.client.auth.remove({ providerID: "kilo" }, { throwOnError: true })
+    await ctx.client.auth.remove({ providerID: GPT_CHAT_BY_PROVIDER_ID }, { throwOnError: true })
     console.log("[Kilo New] KiloProvider: 🚪 Logged out successfully")
     ctx.postMessage({ type: "profileData", data: null })
+    ctx.postMessage({ type: "authLoggedOut" })
 
     await ctx.disposeGlobal()
 

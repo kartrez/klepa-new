@@ -7,6 +7,7 @@ import { mapSSEEventToWebviewMessage } from "./kilo-provider-utils"
 import { resolvePanelProjectDirectory } from "./project-directory"
 import { seedSessionStatuses } from "./session-status"
 import type { KiloConnectionService } from "./services/cli-backend"
+import { EXTENSION_ID } from "./shared/gpt-chat-by"
 import { MarketplaceService } from "./services/marketplace"
 import {
   fetchMarketplaceData,
@@ -38,7 +39,7 @@ export class MarketplacePanelProvider implements vscode.Disposable {
   private subscriptions: Array<() => void> = []
   private readonly marketplace = new MarketplaceService()
   private readonly extensionVersion =
-    vscode.extensions.getExtension("kilocode.kilo-code")?.packageJSON?.version ?? "unknown"
+    vscode.extensions.getExtension(EXTENSION_ID)?.packageJSON?.version ?? "unknown"
 
   constructor(
     private readonly extensionUri: vscode.Uri,

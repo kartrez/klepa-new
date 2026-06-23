@@ -1,5 +1,6 @@
 import * as vscode from "vscode"
 import { KiloProvider } from "./KiloProvider"
+import { isAuthCallbackPath } from "./kilo-provider/handlers/gpt-chat-by-auth"
 import { AgentManagerProvider } from "./agent-manager/AgentManagerProvider"
 import { VscodeHost } from "./agent-manager/vscode-host"
 import { KiloClawProvider } from "./kiloclaw/KiloClawProvider"
@@ -487,7 +488,7 @@ export function activate(context: vscode.ExtensionContext) {
     ),
   )
 
-  // Register URI handler for extension deep links (vscode://kilocode.kilo-code/kilocode/...)
+  // Register URI handler for extension deep links (vscode://copy-code.copy-coder/...)
   context.subscriptions.push(
     vscode.window.registerUriHandler({
       async handleUri(uri: vscode.Uri) {
@@ -497,6 +498,13 @@ export function activate(context: vscode.ExtensionContext) {
           console.log("[Kilo New] URI handler: opening cloud session:", sessionId)
           await vscode.commands.executeCommand(`${KiloProvider.viewType}.focus`)
           provider.openCloudSession(sessionId)
+          return
+        }
+
+        if (isAuthCallbackPath(uri.path)) {
+          console.log("[Kilo New] URI handler: gpt-chat.by loginhook")
+          await vscode.commands.executeCommand(`${KiloProvider.viewType}.focus`)
+          await provider.handleGptChatByAuthCallback(uri)
           return
         }
 

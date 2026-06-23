@@ -6,6 +6,7 @@ import * as path from "path"
 import * as vscode from "vscode"
 import { resolveTreeSitterEnv } from "./cli-resources"
 import { t } from "./i18n"
+import { GPT_CHAT_BY_DEFAULT_CONFIG } from "../../shared/gpt-chat-by"
 import { parseServerPort } from "./server-utils"
 
 export interface ServerInstance {
@@ -139,6 +140,7 @@ export class ServerManager {
           KILO_APP_VERSION: this.context.extension.packageJSON.version,
           KILO_VSCODE_VERSION: vscode.version,
           KILOCODE_EDITOR_NAME: `${vscode.env.appName} ${vscode.version}`,
+          KILO_CONFIG_CONTENT: JSON.stringify(GPT_CHAT_BY_DEFAULT_CONFIG),
           ...(!claudeCompat && { KILO_DISABLE_CLAUDE_CODE: "true" }),
           ...resolveTreeSitterEnv(this.context.extensionPath),
         },

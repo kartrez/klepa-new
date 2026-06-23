@@ -4,6 +4,11 @@ import { Context, Duration, Effect, Layer, Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { Config } from "../config/config"
 import { Auth } from "../auth"
+import {
+  GPT_CHAT_BY_API_BASE,
+  GPT_CHAT_BY_ENV_KEY,
+  GPT_CHAT_BY_PROVIDER_ID,
+} from "@/kilocode/provider/gpt-chat-by"
 import type { Provider } from "@opencode-ai/core/models-dev"
 import * as Log from "@opencode-ai/core/util/log"
 
@@ -113,7 +118,7 @@ export const layer: Layer.Layer<
     })
 
     const authOptions = Effect.fn("ModelCache.authOptions")(function* (providerID: string) {
-      if (providerID !== "kilo" && providerID !== "apertis") return {}
+      if (providerID !== "kilo" && providerID !== "apertis" && providerID !== GPT_CHAT_BY_PROVIDER_ID) return {}
       const config = yield* cfg.get()
       const options: Options = {}
 
@@ -154,12 +159,31 @@ export const layer: Layer.Layer<
         })
       }
 
+      if (providerID === GPT_CHAT_BY_PROVIDER_ID) {
+        const item = config.provider?.[providerID] ?? config.provider?.["gpt-chat-by"]
+        if (item?.options?.apiKey) options.apiKey = item.options.apiKey
+        if (item?.options?.baseURL) options.baseURL = item.options.baseURL
+
+        const primary = yield* auth.get(providerID)
+        const info = primary ?? (yield* auth.get("gpt-chat-by"))
+        if (info?.type === "api") options.apiKey = info.key
+        if (process.env[GPT_CHAT_BY_ENV_KEY]) options.apiKey = process.env[GPT_CHAT_BY_ENV_KEY]
+        if (!options.baseURL) options.baseURL = GPT_CHAT_BY_API_BASE
+        log.debug("klepa auth options resolved", {
+          providerID,
+          hasKey: !!options.apiKey,
+          hasBaseURL: !!options.baseURL,
+        })
+      }
+
       return options
     })
 
     const fetchModels = (providerID: string, options: Options): Effect.Effect<Result, unknown> => {
       if (providerID === "kilo") return kilo.fetch(options)
-      if (providerID === "apertis") return fetchApertisModels(options).pipe(Effect.map((models) => ({ models })))
+      if (providerID === "apertis" || providerID === GPT_CHAT_BY_PROVIDER_ID) {
+        return fetchApertisModels(options).pipe(Effect.map((models) => ({ models })))
+      }
       log.debug("provider not implemented", { providerID })
       return Effect.succeed({ models: {} })
     }
@@ -181,6 +205,9 @@ export const layer: Layer.Layer<
         return JSON.stringify([providerID, options?.baseURL, options?.kilocodeOrganizationId, options?.kilocodeToken])
       }
       if (providerID === "apertis") return JSON.stringify([providerID, options?.baseURL, options?.apiKey])
+      if (providerID === GPT_CHAT_BY_PROVIDER_ID) {
+        return JSON.stringify([providerID, options?.baseURL, options?.apiKey])
+      }
       return providerID
     }
 

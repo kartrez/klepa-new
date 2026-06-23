@@ -1,0 +1,83 @@
+.gpt-chat-by-auth {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 16px;
+  max-width: 420px;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.gpt-chat-by-auth-title {
+  font-size: var(--kilo-font-size-18);
+  font-weight: 600;
+  margin: 8px 0 4px;
+  text-align: center;
+  color: var(--vscode-foreground);
+}
+
+.gpt-chat-by-auth-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: 8px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  text-align: left;
+}
+
+.gpt-chat-by-auth-card:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.gpt-chat-by-auth-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gpt-chat-by-auth-card-title {
+  font-size: var(--kilo-font-size-14);
+  font-weight: 600;
+}
+
+.gpt-chat-by-auth-card-subtitle {
+  font-size: var(--kilo-font-size-12);
+  color: var(--vscode-descriptionForeground);
+}
+
+.gpt-chat-by-auth-field {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gpt-chat-by-auth-label {
+  font-size: var(--kilo-font-size-12);
+  color: var(--vscode-descriptionForeground);
+}
+
+.gpt-chat-by-auth-error {
+  width: 100%;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--vscode-errorForeground) 12%, transparent);
+  color: var(--vscode-errorForeground);
+  font-size: var(--kilo-font-size-12);
+}
+
+.gpt-chat-by-auth-busy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--vscode-descriptionForeground);
+  font-size: var(--kilo-font-size-12);
+}
