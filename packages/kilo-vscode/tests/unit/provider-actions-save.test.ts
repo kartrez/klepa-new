@@ -536,6 +536,40 @@ describe("fetchProviderData", () => {
     })
     expect(result.response.all.every((item) => !("key" in (item as Record<string, unknown>)))).toBe(true)
   })
+
+  it("retains klepa keys without options.baseURL", async () => {
+    const client = {
+      provider: {
+        list: async () => ({
+          data: {
+            all: [
+              {
+                id: "klepa",
+                name: "Klepa",
+                source: "api",
+                key: "klepa-token",
+                env: [],
+                options: {},
+                models: {},
+              },
+            ],
+            connected: ["klepa"],
+            default: {},
+          },
+        }),
+        auth: async () => ({ data: {} }),
+      },
+      kilo: {
+        authStatus: async () => ({ data: { authenticated: false } }),
+      },
+    } as unknown as Parameters<typeof fetchProviderData>[0]
+
+    const result = await fetchProviderData(client, "/tmp")
+
+    expect(result.storedKeys).toEqual({
+      klepa: { key: "klepa-token", baseURL: "https://api.gpt-chat.by/api/" },
+    })
+  })
 })
 
 describe("resolveStoredKey", () => {

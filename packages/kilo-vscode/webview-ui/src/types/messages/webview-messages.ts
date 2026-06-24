@@ -133,6 +133,10 @@ export interface RefreshProfileRequest {
   type: "refreshProfile"
 }
 
+export interface RefreshBalanceRequest {
+  type: "refreshBalance"
+}
+
 export interface OpenExternalRequest {
   type: "openExternal"
   url: string
@@ -1126,6 +1130,7 @@ export type WebviewMessage =
   | GptChatByTokenLoginRequest
   | LogoutRequest
   | RefreshProfileRequest
+  | RefreshBalanceRequest
   | OpenExternalRequest
   | OpenSettingsPanelRequest
   | OpenVSCodeSettingsRequest

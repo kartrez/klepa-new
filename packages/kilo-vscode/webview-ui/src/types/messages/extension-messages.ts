@@ -283,6 +283,12 @@ export interface ProfileDataMessage {
   data: ProfileData | null
 }
 
+export interface BalanceDataMessage {
+  type: "balanceData"
+  balance: string | null
+  error?: string
+}
+
 export interface DeviceAuthStartedMessage {
   type: "deviceAuthStarted"
   code?: string
@@ -1012,6 +1018,7 @@ export type ExtensionMessage =
   | GitRemoteUrlLoadedMessage
   | ActionMessage
   | ProfileDataMessage
+  | BalanceDataMessage
   | DeviceAuthStartedMessage
   | DeviceAuthCompleteMessage
   | DeviceAuthFailedMessage

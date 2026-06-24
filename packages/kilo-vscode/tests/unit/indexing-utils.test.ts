@@ -141,6 +141,10 @@ describe("indexing feature detection", () => {
     expect(configFeatures({ plugin: ["file:///tmp/.opencode/plugin/index.js"] }).indexing).toBe(false)
     expect(configFeatures({}).indexing).toBe(false)
   })
+
+  it("disables autocomplete in the Klepa fork", () => {
+    expect(configFeatures({}).autocomplete).toBe(false)
+  })
 })
 
 describe("indexing status message handling", () => {

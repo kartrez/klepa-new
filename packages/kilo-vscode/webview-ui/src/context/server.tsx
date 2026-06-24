@@ -20,6 +20,9 @@ interface ServerContextValue {
   authBusy: Accessor<boolean>
   authError: Accessor<string | undefined>
   gptAuthed: Accessor<boolean>
+  balance: Accessor<string | null | undefined>
+  balanceBusy: Accessor<boolean>
+  refreshBalance: () => void
   startLogin: () => void
   goToLogin: () => void
   vscodeLanguage: Accessor<string | undefined>
@@ -46,6 +49,8 @@ type ServerSignals = {
   setAuthBusy: (value: boolean) => void
   setAuthError: (value: string | undefined) => void
   setGptAuthed: (value: boolean) => void
+  setBalance: (value: string | null | undefined) => void
+  setBalanceBusy: (value: boolean) => void
 }
 
 function handleConnectionMessage(message: ExtensionMessage, signals: ServerSignals) {
@@ -95,6 +100,12 @@ function handleConnectionMessage(message: ExtensionMessage, signals: ServerSigna
   if (message.type === "profileData") {
     console.log("[Kilo New] Profile data:", message.data ? "received" : "null")
     signals.setProfileData(message.data)
+    return true
+  }
+
+  if (message.type === "balanceData") {
+    signals.setBalanceBusy(false)
+    signals.setBalance(message.error ? null : message.balance)
     return true
   }
 
@@ -157,6 +168,7 @@ function handleGptAuthMessage(message: ExtensionMessage, signals: ServerSignals)
 
   if (message.type === "authLoggedOut") {
     signals.setGptAuthed(false)
+    signals.setBalance(undefined)
     return true
   }
 
@@ -182,6 +194,8 @@ export const ServerProvider: ParentComponent = (props) => {
   const [authBusy, setAuthBusy] = createSignal(false)
   const [authError, setAuthError] = createSignal<string | undefined>()
   const [gptAuthed, setGptAuthed] = createSignal(false)
+  const [balance, setBalance] = createSignal<string | null | undefined>(undefined)
+  const [balanceBusy, setBalanceBusy] = createSignal(false)
   const [vscodeLanguage, setVscodeLanguage] = createSignal<string | undefined>()
   const [languageOverride, setLanguageOverride] = createSignal<string | undefined>()
   const [workspaceDirectory, setWorkspaceDirectory] = createSignal<string>("")
@@ -211,6 +225,8 @@ export const ServerProvider: ParentComponent = (props) => {
       setAuthBusy,
       setAuthError,
       setGptAuthed,
+      setBalance,
+      setBalanceBusy,
     }
 
     const unsubscribe = vscode.onMessage((message: ExtensionMessage) => {
@@ -246,9 +262,14 @@ export const ServerProvider: ParentComponent = (props) => {
    * `startLogin()` directly. Otherwise the login flow runs silently and the
    * user has no way to see the code or cancel if the browser is dismissed.
    */
+  const refreshBalance = () => {
+    if (balanceBusy()) return
+    setBalanceBusy(true)
+    vscode.postMessage({ type: "refreshBalance" })
+  }
+
   const goToLogin = () => {
-    window.postMessage({ type: "navigate", view: "profile" }, "*")
-    startLogin()
+    vscode.postMessage({ type: "logout" })
   }
 
   const value: ServerContextValue = {
@@ -263,6 +284,9 @@ export const ServerProvider: ParentComponent = (props) => {
     authBusy,
     authError,
     gptAuthed,
+    balance,
+    balanceBusy,
+    refreshBalance,
     startLogin,
     goToLogin,
     vscodeLanguage,

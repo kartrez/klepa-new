@@ -9,7 +9,7 @@ import {
   sanitizeCustomProviderConfig,
   withCustomProviderDeletions,
 } from "./shared/custom-provider"
-import { GPT_CHAT_BY_PROVIDER_ID } from "./shared/gpt-chat-by"
+import { GPT_CHAT_BY_API_BASE, GPT_CHAT_BY_PROVIDER_ID } from "./shared/gpt-chat-by"
 import { isCustomProviderPackage, KILO_AUTO, KILO_PROVIDER_ID, parseModelString } from "./shared/provider-model"
 import { configFeatures } from "./features"
 
@@ -81,7 +81,9 @@ export async function fetchProviderData(client: KiloClient, dir: string) {
       // (#10139). Only providers with a configured baseURL are retained — the
       // fetch handler requires a URL match before applying a stored key.
       const options = record(raw.options) ? raw.options : undefined
-      const baseURL = options && typeof options.baseURL === "string" ? options.baseURL : undefined
+      const baseURL =
+        (options && typeof options.baseURL === "string" ? options.baseURL : undefined) ??
+        (raw.id === GPT_CHAT_BY_PROVIDER_ID || raw.id === "gpt-chat-by" ? GPT_CHAT_BY_API_BASE : undefined)
       if (baseURL) storedKeys[raw.id] = { key: raw.key, baseURL }
     }
     if (!("key" in raw)) return item

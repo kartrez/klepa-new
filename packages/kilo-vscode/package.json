@@ -112,12 +112,6 @@
         "icon": "$(organization)"
       },
       {
-        "command": "kilo-code.new.kiloClawOpen",
-        "title": "KiloClaw",
-        "category": "Kilo Code",
-        "icon": "$(comment-discussion)"
-      },
-      {
         "command": "kilo-code.new.marketplaceButtonClicked",
         "title": "Marketplace",
         "category": "Kilo Code",
@@ -128,12 +122,6 @@
         "title": "History",
         "category": "Kilo Code",
         "icon": "$(history)"
-      },
-      {
-        "command": "kilo-code.new.profileButtonClicked",
-        "title": "Profile",
-        "category": "Kilo Code",
-        "icon": "$(account)"
       },
       {
         "command": "kilo-code.new.settingsButtonClicked",
@@ -152,11 +140,6 @@
         "icon": "$(organization)"
       },
       {
-        "command": "kilo-code.new.sidebarTitle.kiloClawOpen",
-        "title": "KiloClaw",
-        "icon": "$(comment-discussion)"
-      },
-      {
         "command": "kilo-code.new.sidebarTitle.marketplaceButtonClicked",
         "title": "Marketplace",
         "icon": "$(extensions)"
@@ -165,11 +148,6 @@
         "command": "kilo-code.new.sidebarTitle.historyButtonClicked",
         "title": "History",
         "icon": "$(history)"
-      },
-      {
-        "command": "kilo-code.new.sidebarTitle.profileButtonClicked",
-        "title": "Profile",
-        "icon": "$(account)"
       },
       {
         "command": "kilo-code.new.sidebarTitle.settingsButtonClicked",
@@ -449,15 +427,7 @@
           "when": "false"
         },
         {
-          "command": "kilo-code.new.sidebarTitle.kiloClawOpen",
-          "when": "false"
-        },
-        {
           "command": "kilo-code.new.sidebarTitle.marketplaceButtonClicked",
-          "when": "false"
-        },
-        {
-          "command": "kilo-code.new.sidebarTitle.profileButtonClicked",
           "when": "false"
         },
         {
@@ -482,23 +452,13 @@
           "when": "view == kilo-code.SidebarProvider"
         },
         {
-          "command": "kilo-code.new.sidebarTitle.kiloClawOpen",
+          "command": "kilo-code.new.sidebarTitle.marketplaceButtonClicked",
           "group": "navigation@3",
           "when": "view == kilo-code.SidebarProvider"
         },
         {
-          "command": "kilo-code.new.sidebarTitle.marketplaceButtonClicked",
-          "group": "navigation@4",
-          "when": "view == kilo-code.SidebarProvider"
-        },
-        {
-          "command": "kilo-code.new.sidebarTitle.profileButtonClicked",
-          "group": "navigation@5",
-          "when": "view == kilo-code.SidebarProvider"
-        },
-        {
           "command": "kilo-code.new.sidebarTitle.settingsButtonClicked",
-          "group": "navigation@6",
+          "group": "navigation@4",
           "when": "view == kilo-code.SidebarProvider"
         }
       ],
@@ -533,13 +493,8 @@
           "when": "activeWebviewPanelId == kilo-code.new.TabPanel"
         },
         {
-          "command": "kilo-code.new.profileButtonClicked",
-          "group": "navigation@2",
-          "when": "activeWebviewPanelId == kilo-code.new.TabPanel"
-        },
-        {
           "command": "kilo-code.new.settingsButtonClicked",
-          "group": "navigation@3",
+          "group": "navigation@2",
           "when": "activeWebviewPanelId == kilo-code.new.TabPanel"
         }
       ],

@@ -1,0 +1,42 @@
+.klepa-account-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, rgba(128, 128, 128, 0.2));
+  background: var(--vscode-sideBar-background);
+  flex-shrink: 0;
+}
+
+.klepa-account-balance {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font: inherit;
+  cursor: pointer;
+}
+
+.klepa-account-balance:hover {
+  color: var(--vscode-textLink-foreground);
+}
+
+.klepa-account-balance-label {
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+
+.klepa-account-balance-value {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.klepa-account-balance-spinner {
+  width: 12px;
+  height: 12px;
+}

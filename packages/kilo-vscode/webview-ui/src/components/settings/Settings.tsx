@@ -34,7 +34,7 @@ const Settings: Component<SettingsProps> = (props) => {
   const server = useServer()
   const language = useLanguage()
   const vscode = useVSCode()
-  const { isDirty, saving, saveError, saveConfig, discardConfig } = useConfig()
+  const { isDirty, saving, saveError, saveConfig, discardConfig, features } = useConfig()
   const session = useSession()
   const [active, setActive] = createSignal(props.tab ?? "models")
   const [errorExpanded, setErrorExpanded] = createSignal(false)
@@ -95,7 +95,7 @@ const Settings: Component<SettingsProps> = (props) => {
     on(
       () => props.tab,
       (tab) => {
-        if (!tab || tab === "providers" || tab === "indexing") {
+        if (!tab || tab === "providers" || tab === "indexing" || (!features().autocomplete && tab === "autocomplete")) {
           setActive("models")
           return
         }
@@ -167,10 +167,12 @@ const Settings: Component<SettingsProps> = (props) => {
             <Icon name="eye" />
             <span class="label">{language.t("settings.display.title")}</span>
           </Tabs.Trigger>
-          <Tabs.Trigger value="autocomplete" aria-label={language.t("settings.autocomplete.title")}>
-            <Icon name="code-lines" />
-            <span class="label">{language.t("settings.autocomplete.title")}</span>
-          </Tabs.Trigger>
+          <Show when={features().autocomplete}>
+            <Tabs.Trigger value="autocomplete" aria-label={language.t("settings.autocomplete.title")}>
+              <Icon name="code-lines" />
+              <span class="label">{language.t("settings.autocomplete.title")}</span>
+            </Tabs.Trigger>
+          </Show>
           <Tabs.Trigger value="notifications" aria-label={language.t("settings.notifications.title")}>
             <Icon name="circle-check" />
             <span class="label">{language.t("settings.notifications.title")}</span>
@@ -222,10 +224,12 @@ const Settings: Component<SettingsProps> = (props) => {
           <h3>{language.t("settings.display.title")}</h3>
           <DisplayTab />
         </Tabs.Content>
-        <Tabs.Content value="autocomplete">
-          <h3>{language.t("settings.autocomplete.title")}</h3>
-          <AutocompleteTab onNavigateToModels={() => onTabChange("models")} />
-        </Tabs.Content>
+        <Show when={features().autocomplete}>
+          <Tabs.Content value="autocomplete">
+            <h3>{language.t("settings.autocomplete.title")}</h3>
+            <AutocompleteTab onNavigateToModels={() => onTabChange("models")} />
+          </Tabs.Content>
+        </Show>
         <Tabs.Content value="notifications">
           <h3>{language.t("settings.notifications.title")}</h3>
           <NotificationsTab />
@@ -253,7 +257,6 @@ const Settings: Component<SettingsProps> = (props) => {
             port={server.serverInfo()?.port ?? null}
             connectionState={server.connectionState()}
             extensionVersion={server.extensionVersion()}
-            onMigrationClick={props.onMigrationClick}
           />
         </Tabs.Content>
       </Tabs>

@@ -153,7 +153,8 @@ import {
 import type { StoredProviderKey } from "./provider-actions"
 import { fetchOpenAIModels, FetchModelsError } from "./shared/fetch-models"
 import type { Agent } from "@kilocode/sdk/v2/client"
-import { EXTENSION_ID } from "./shared/gpt-chat-by"
+import { EXTENSION_ID, GPT_CHAT_BY_PROVIDER_ID } from "./shared/gpt-chat-by"
+import { fetchKlepaBalance, resolveKlepaToken } from "./kilo-provider/handlers/gpt-chat-by-balance"
 import { createAutoApproveBridge } from "./kilo-provider/auto-approve"
 import type { KiloProviderOptions } from "./kilo-provider/options"
 import { fetchKiloEmbeddingModelCatalog } from "@kilocode/kilo-gateway"
@@ -983,6 +984,9 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
           break
         case "refreshProfile":
           await handleRefreshProfile(this.authCtx)
+          break
+        case "refreshBalance":
+          await this.handleRefreshBalance()
           break
         case "openSettingsPanel":
           vscode.commands.executeCommand("kilo-code.new.settingsButtonClicked", message.tab)
@@ -3047,6 +3051,29 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
     await this.disposeGlobal()
     await this.fetchAndSendProviders()
     this.postMessage({ type: "authComplete" })
+    await this.handleRefreshBalance()
+  }
+
+  private async handleRefreshBalance() {
+    const client = this.client
+    if (!client) return
+
+    const dir = this.getWorkspaceDirectory()
+    try {
+      if (!this.storedProviderKeys[GPT_CHAT_BY_PROVIDER_ID]) {
+        const { storedKeys } = await fetchProviderData(client, dir)
+        this.storedProviderKeys = storedKeys
+      }
+      const token = await resolveKlepaToken(client, this.storedProviderKeys, dir)
+      const balance = await fetchKlepaBalance(token)
+      this.postMessage({ type: "balanceData", balance })
+    } catch (error) {
+      this.postMessage({
+        type: "balanceData",
+        balance: null,
+        error: getErrorMessage(error) || "Failed to fetch balance",
+      })
+    }
   }
 
   private async handleGptChatByTelegramLogin(): Promise<void> {

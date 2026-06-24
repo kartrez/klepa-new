@@ -11,6 +11,14 @@
   position: relative;
 }
 
+.container-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .chat-view {
   display: flex;
   flex-direction: column;

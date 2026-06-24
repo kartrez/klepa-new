@@ -10,7 +10,7 @@ describe("ModesMigrator", () => {
       expect(ModesMigrator.isDefaultMode("architect")).toBe(true)
       expect(ModesMigrator.isDefaultMode("ask")).toBe(true)
       expect(ModesMigrator.isDefaultMode("debug")).toBe(true)
-      expect(ModesMigrator.isDefaultMode("orchestrator")).toBe(true)
+      expect(ModesMigrator.isDefaultMode("orchestrator")).toBe(false)
     })
 
     test("returns false for custom modes", () => {

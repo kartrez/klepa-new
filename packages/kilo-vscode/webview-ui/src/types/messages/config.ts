@@ -149,4 +149,5 @@ export interface Config {
 export interface FeatureFlags {
   indexing: boolean
   sandboxControls: boolean
+  autocomplete: boolean
 }
