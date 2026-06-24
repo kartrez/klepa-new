@@ -12,8 +12,6 @@ import { Icon } from "@kilocode/kilo-ui/icon"
 import { showToast } from "@kilocode/kilo-ui/toast"
 import { useSession } from "../../context/session"
 import { useServer } from "../../context/server"
-import { useIndexing } from "../../context/indexing"
-import { indexingButtonVisible } from "../../context/indexing-utils"
 import { useLanguage } from "../../context/language"
 import { useVSCode } from "../../context/vscode"
 import { useConfig } from "../../context/config"
@@ -78,8 +76,7 @@ interface PromptInputProps {
 export const PromptInput: Component<PromptInputProps> = (props) => {
   const session = useSession()
   const server = useServer()
-  const indexing = useIndexing()
-  const { config, globalConfig, settings, features } = useConfig()
+  const { config, settings, features } = useConfig()
   const provider = useProvider()
   const language = useLanguage()
   const vscode = useVSCode()
@@ -297,13 +294,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
   const isBusy = () =>
     isPromptBusy(session.status(), !!props.suggesting?.(), !!props.questioning?.(), session.submitting())
-  const showIndexing = () =>
-    indexingButtonVisible(
-      features().indexing,
-      Boolean(settings()["indexing.showButtonWhenDisabled"] ?? true),
-      config(),
-      globalConfig(),
-    )
   const isDisabled = () => !server.isConnected()
   const canUseSpeech = () => canUseSpeechToText(config(), provider.authStates())
   const speechModel = () => selectedSpeechToTextModel(config())
@@ -632,10 +622,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   }
 
   const canEnhance = () => !isBusy() && !isDisabled() && !enhancing()
-
-  const handleOpenIndexingSettings = () => {
-    vscode.postMessage({ type: "openSettingsTab", tab: "indexing" })
-  }
 
   const handleEnhance = () => {
     if (isDisabled() || enhancing() || isBusy()) return
@@ -1024,32 +1010,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
           </Show>
         </div>
         <div class="prompt-input-hint-actions">
-          <Show when={showIndexing()}>
-            <Tooltip value={indexing.status().message || indexing.label()} placement="top">
-              <Button
-                variant="ghost"
-                size="small"
-                onClick={handleOpenIndexingSettings}
-                aria-label={language.t("prompt.action.indexing")}
-                class={`prompt-indexing-button prompt-indexing-button--${indexing.tone()}`}
-              >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <ellipse cx="8" cy="3.5" rx="4.5" ry="2" stroke="currentColor" stroke-width="1.2" />
-                  <path
-                    d="M3.5 3.5V12.5C3.5 13.6046 5.51472 14.5 8 14.5C10.4853 14.5 12.5 13.6046 12.5 12.5V3.5"
-                    stroke="currentColor"
-                    stroke-width="1.2"
-                  />
-                  <path
-                    d="M3.5 8C3.5 9.10457 5.51472 10 8 10C10.4853 10 12.5 9.10457 12.5 8"
-                    stroke="currentColor"
-                    stroke-width="1.2"
-                  />
-                  <circle cx="13" cy="3" r="2.5" fill="currentColor" />
-                </svg>
-              </Button>
-            </Tooltip>
-          </Show>
           <Tooltip
             value={
               autoApprove()

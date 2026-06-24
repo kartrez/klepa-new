@@ -8,7 +8,6 @@ import { useLanguage } from "../../context/language"
 import { useConfig } from "../../context/config"
 import { useSession } from "../../context/session"
 import ModelsTab from "./ModelsTab"
-import ProvidersTab from "./ProvidersTab"
 import AgentBehaviourTab from "./AgentBehaviourTab"
 import AutoApproveTab from "./AutoApproveTab"
 import BrowserTab from "./BrowserTab"
@@ -22,7 +21,6 @@ import CommitMessageTab from "./CommitMessageTab"
 import ExperimentalTab from "./ExperimentalTab"
 import LanguageTab from "./LanguageTab"
 import AboutKiloCodeTab from "./AboutKiloCodeTab"
-import IndexingTab from "./IndexingTab"
 import { useServer } from "../../context/server"
 import type { MigrationSource } from "../../types/messages"
 
@@ -36,7 +34,7 @@ const Settings: Component<SettingsProps> = (props) => {
   const server = useServer()
   const language = useLanguage()
   const vscode = useVSCode()
-  const { isDirty, saving, saveError, saveConfig, discardConfig, features } = useConfig()
+  const { isDirty, saving, saveError, saveConfig, discardConfig } = useConfig()
   const session = useSession()
   const [active, setActive] = createSignal(props.tab ?? "models")
   const [errorExpanded, setErrorExpanded] = createSignal(false)
@@ -97,15 +95,14 @@ const Settings: Component<SettingsProps> = (props) => {
     on(
       () => props.tab,
       (tab) => {
-        if (tab) setActive(tab)
+        if (!tab || tab === "providers" || tab === "indexing") {
+          setActive("models")
+          return
+        }
+        setActive(tab)
       },
     ),
   )
-
-  createEffect(() => {
-    if (features().indexing || active() !== "indexing") return
-    onTabChange("providers")
-  })
 
   const onTabChange = (tab: string) => {
     setActive(tab)
@@ -150,10 +147,6 @@ const Settings: Component<SettingsProps> = (props) => {
             <Icon name="models" />
             <span class="label">{language.t("settings.models.title")}</span>
           </Tabs.Trigger>
-          <Tabs.Trigger value="providers" aria-label={language.t("settings.providers.title")}>
-            <Icon name="providers" />
-            <span class="label">{language.t("settings.providers.title")}</span>
-          </Tabs.Trigger>
           <Tabs.Trigger value="agentBehaviour" aria-label={language.t("settings.agentBehaviour.title")}>
             <Icon name="brain" />
             <span class="label">{language.t("settings.agentBehaviour.title")}</span>
@@ -191,12 +184,6 @@ const Settings: Component<SettingsProps> = (props) => {
             <Icon name="edit" />
             <span class="label">{language.t("settings.commitMessage.title")}</span>
           </Tabs.Trigger>
-          <Show when={features().indexing}>
-            <Tabs.Trigger value="indexing" aria-label={language.t("settings.indexing.title")}>
-              <Icon name="server" />
-              <span class="label">{language.t("settings.indexing.title")}</span>
-            </Tabs.Trigger>
-          </Show>
           <Tabs.Trigger value="experimental" aria-label={language.t("settings.experimental.title")}>
             <Icon name="settings-gear" />
             <span class="label">{language.t("settings.experimental.title")}</span>
@@ -214,10 +201,6 @@ const Settings: Component<SettingsProps> = (props) => {
         <Tabs.Content value="models">
           <h3>{language.t("settings.models.title")}</h3>
           <ModelsTab />
-        </Tabs.Content>
-        <Tabs.Content value="providers">
-          <h3>{language.t("settings.providers.title")}</h3>
-          <ProvidersTab />
         </Tabs.Content>
         <Tabs.Content value="agentBehaviour">
           <h3>{language.t("settings.agentBehaviour.title")}</h3>
@@ -256,12 +239,6 @@ const Settings: Component<SettingsProps> = (props) => {
           <h3>{language.t("settings.commitMessage.title")}</h3>
           <CommitMessageTab />
         </Tabs.Content>
-        <Show when={features().indexing}>
-          <Tabs.Content value="indexing">
-            <h3>{language.t("settings.indexing.title")}</h3>
-            <IndexingTab />
-          </Tabs.Content>
-        </Show>
         <Tabs.Content value="experimental">
           <h3>{language.t("settings.experimental.title")}</h3>
           <ExperimentalTab />

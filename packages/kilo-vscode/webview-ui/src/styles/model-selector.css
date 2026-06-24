@@ -463,6 +463,16 @@
   opacity: 0.8;
 }
 
+.model-selector-item-cost {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: var(--kilo-font-size-10);
+  color: var(--vscode-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .model-selector-star {
   all: unset;
   flex-shrink: 0;

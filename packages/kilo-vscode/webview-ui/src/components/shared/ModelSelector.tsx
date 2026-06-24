@@ -34,6 +34,7 @@ import type { ModelSelection } from "../../types/messages"
 import { isEnterKeyCommitNotIme } from "../../utils/ime-enter"
 import {
   KILO_GATEWAY_ID,
+  GPT_CHAT_BY_PROVIDER_ID,
   isSmall,
   providerSortKey,
   isFree,
@@ -42,6 +43,8 @@ import {
   freeDataLabel,
   buildTriggerLabel,
   sanitizeName,
+  resolveModelCost,
+  fmtIoCost,
 } from "./model-selector-utils"
 import { ModelPreview } from "./ModelPreview"
 import { searchMatch } from "../../utils/search-match"
@@ -654,11 +657,14 @@ export const ModelSelectorBase: Component<ModelSelectorBaseProps> = (props) => {
     return m !== undefined && m.providerID === model.providerID && m.id === model.id
   }
 
-  const triggerLabel = () =>
-    buildTriggerLabel(
-      activeModel()?.name,
-      activeModel()?.providerID,
-      activeModel()?.providerName,
+  const triggerLabel = () => {
+    const model = activeModel()
+    const name =
+      model?.providerID === GPT_CHAT_BY_PROVIDER_ID ? model.id : model?.name
+    return buildTriggerLabel(
+      name,
+      model?.providerID,
+      model?.providerName,
       props.value,
       props.allowClear ?? false,
       props.clearLabel ?? "",
@@ -669,6 +675,7 @@ export const ModelSelectorBase: Component<ModelSelectorBaseProps> = (props) => {
         notSet: language.t("dialog.model.notSet"),
       },
     )
+  }
   const label = () => props.label ?? language.t("dialog.model.select.title")
   const controlLabel = () => `${label()}: ${triggerLabel()}`
   const searchLabel = () => `${controlLabel()}. ${language.t("dialog.model.search.placeholder")}`
@@ -882,7 +889,7 @@ export const ModelSelectorBase: Component<ModelSelectorBaseProps> = (props) => {
                                 const hovered = () => isSelected(row.key)
                                 const preActive = () => isPreActive(row.key)
                                 const starred = () => favoriteKeys().has(modelKey(model.providerID, model.id))
-                                const showProvider = () => row.kind === "favorite"
+                                const ioCost = () => fmtIoCost(resolveModelCost(model))
                                 const showSelect = () => expanded() && preActive() && !isActive(model)
                                 const starLabel = () =>
                                   `${starred() ? language.t("model.favorite.remove") : language.t("model.favorite.add")}: ${sanitizeName(model.name)}`
@@ -958,8 +965,8 @@ export const ModelSelectorBase: Component<ModelSelectorBaseProps> = (props) => {
                                             </Show>
                                           </span>
                                         </Show>
-                                        <Show when={showProvider()}>
-                                          <span class="model-selector-item-provider-tag">{model.providerName}</span>
+                                        <Show when={ioCost()}>
+                                          <span class="model-selector-item-cost">{ioCost()}</span>
                                         </Show>
                                       </div>
                                     </div>

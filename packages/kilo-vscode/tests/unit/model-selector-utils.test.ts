@@ -10,19 +10,21 @@ import {
   isDataCollectedModel,
   hasByok,
   isFree,
+  fmtIoCost,
+  resolveModelCost,
 } from "../../webview-ui/src/components/shared/model-selector-utils"
 
 const labels = { select: "Select model", noProviders: "No providers", notSet: "Not set" }
 
 describe("providerSortKey", () => {
-  it("returns 0 for kilo gateway", () => {
-    expect(providerSortKey(KILO_GATEWAY_ID)).toBe(0)
+  it("returns 1 for kilo gateway after klepa", () => {
+    expect(providerSortKey(KILO_GATEWAY_ID)).toBe(1)
   })
 
   it("returns correct index for known providers", () => {
-    expect(providerSortKey("anthropic")).toBe(1)
-    expect(providerSortKey("openai")).toBe(3)
-    expect(providerSortKey("google")).toBe(4)
+    expect(providerSortKey("anthropic")).toBe(2)
+    expect(providerSortKey("openai")).toBe(4)
+    expect(providerSortKey("google")).toBe(5)
   })
 
   it("returns order length for unknown provider", () => {
@@ -158,6 +160,15 @@ describe("buildTriggerLabel", () => {
     expect(buildTriggerLabel(undefined, undefined, undefined, raw, false, "", true, labels)).toBe("kilo-auto/frontier")
   })
 
+  it("returns modelID for klepa raw selection", () => {
+    const raw = { providerID: "klepa", modelID: "klepa/auto" }
+    expect(buildTriggerLabel(undefined, undefined, undefined, raw, false, "", true, labels)).toBe("klepa/auto")
+  })
+
+  it("returns model name without provider prefix for klepa resolved selection", () => {
+    expect(buildTriggerLabel("klepa/auto", "klepa", "Klepa", null, false, "", true, labels)).toBe("klepa/auto")
+  })
+
   it("returns providerID / modelID for non-kilo raw selection", () => {
     const raw = { providerID: "anthropic", modelID: "claude-3-5-sonnet" }
     expect(buildTriggerLabel(undefined, undefined, undefined, raw, false, "", true, labels)).toBe(
@@ -194,5 +205,32 @@ describe("buildTriggerLabel", () => {
   it("ignores partial raw selection (only modelID)", () => {
     const raw = { providerID: "", modelID: "claude-3-5-sonnet" }
     expect(buildTriggerLabel(undefined, undefined, undefined, raw, false, "", true, labels)).toBe("Select model")
+  })
+})
+
+describe("resolveModelCost", () => {
+  it("prefers cost object when present", () => {
+    expect(resolveModelCost({ cost: { input: 1.2, output: 3.4 }, inputPrice: 9, outputPrice: 9 })).toEqual({
+      input: 1.2,
+      output: 3.4,
+    })
+  })
+
+  it("falls back to inputPrice and outputPrice", () => {
+    expect(resolveModelCost({ inputPrice: 1.25, outputPrice: 5.55 })).toEqual({ input: 1.25, output: 5.55 })
+  })
+
+  it("returns undefined when no pricing fields exist", () => {
+    expect(resolveModelCost({})).toBeUndefined()
+  })
+})
+
+describe("fmtIoCost", () => {
+  it("formats input and output with one decimal place", () => {
+    expect(fmtIoCost({ input: 1.25, output: 5.55 })).toBe("$ 1.3/5.5")
+  })
+
+  it("returns null when cost is missing", () => {
+    expect(fmtIoCost(undefined)).toBeNull()
   })
 })

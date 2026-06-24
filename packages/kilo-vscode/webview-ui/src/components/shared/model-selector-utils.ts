@@ -2,11 +2,24 @@ import type { ModelSelection } from "../../types/messages"
 import type { EnrichedModel } from "../../context/provider"
 import {
   KILO_PROVIDER_ID as KILO_GATEWAY_ID,
+  GPT_CHAT_BY_PROVIDER_ID,
   PROVIDER_PRIORITY as PROVIDER_ORDER,
   providerOrderIndex,
 } from "../../../../src/shared/provider-model"
 
-export { KILO_GATEWAY_ID, PROVIDER_ORDER }
+export { KILO_GATEWAY_ID, GPT_CHAT_BY_PROVIDER_ID, PROVIDER_ORDER }
+
+export function resolveModelCost(model: Pick<EnrichedModel, "cost" | "inputPrice" | "outputPrice">) {
+  if (model.cost) return model.cost
+  if (model.inputPrice === undefined && model.outputPrice === undefined) return undefined
+  return { input: model.inputPrice ?? 0, output: model.outputPrice ?? 0 }
+}
+
+/** Input/output price per 1M tokens, e.g. "$ 1.3/5.5". */
+export function fmtIoCost(cost: { input: number; output: number } | undefined): string | null {
+  if (!cost) return null
+  return `$ ${cost.input.toFixed(1)}/${cost.output.toFixed(1)}`
+}
 
 export const KILO_AUTO_SMALL_IDS = new Set(["kilo-auto/small", "auto-small"])
 
@@ -59,13 +72,15 @@ export function buildTriggerLabel(
   hasProviders: boolean,
   labels: { select: string; noProviders: string; notSet: string },
 ): string {
+  const single = providerID === KILO_GATEWAY_ID || providerID === GPT_CHAT_BY_PROVIDER_ID
   if (resolvedName) {
-    if (providerID === KILO_GATEWAY_ID) return stripSubProviderPrefix(resolvedName)
+    if (single) return stripSubProviderPrefix(resolvedName)
     if (providerName) return `${providerName} / ${resolvedName}`
     return resolvedName
   }
   if (raw?.providerID && raw?.modelID) {
-    return raw.providerID === KILO_GATEWAY_ID ? raw.modelID : `${raw.providerID} / ${raw.modelID}`
+    if (raw.providerID === KILO_GATEWAY_ID || raw.providerID === GPT_CHAT_BY_PROVIDER_ID) return raw.modelID
+    return `${raw.providerID} / ${raw.modelID}`
   }
   if (allowClear) return clearLabel || labels.notSet
   return hasProviders ? labels.select : labels.noProviders
