@@ -7,8 +7,8 @@ import type { RemoteStatusService } from "./services/RemoteStatusService"
 type PanelView = "settings" | "profile" | "indexing"
 
 const PANEL_TITLES: Record<PanelView, string> = {
-  settings: "Kilo Settings",
-  profile: "Kilo Profile",
+  settings: "Klepa AI Settings",
+  profile: "Klepa AI Profile",
   indexing: "Codebase Indexing",
 }
 

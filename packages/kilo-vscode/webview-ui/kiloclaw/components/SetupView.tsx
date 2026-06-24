@@ -4,6 +4,7 @@ import { Button } from "@kilocode/kilo-ui/button"
 import { Card, CardTitle, CardDescription, CardActions } from "@kilocode/kilo-ui/card"
 import { useClaw } from "../context/claw"
 import { useKiloClawLanguage } from "../context/language"
+import { SITE_URL } from "../../../src/shared/branding"
 
 export function SetupView() {
   const claw = useClaw()
@@ -19,10 +20,10 @@ export function SetupView() {
           <p class="kiloclaw-card-text">{t("kiloClaw.setup.description2")}</p>
         </CardDescription>
         <CardActions>
-          <Button variant="ghost" onClick={() => claw.openExternal("https://kilo.ai/kiloclaw")}>
+          <Button variant="ghost" onClick={() => claw.openExternal(SITE_URL)}>
             {t("kiloClaw.setup.learnMore")}
           </Button>
-          <Button variant="primary" onClick={() => claw.openExternal("https://app.kilo.ai/claw")}>
+          <Button variant="primary" onClick={() => claw.openExternal(SITE_URL)}>
             {t("kiloClaw.setup.tryKiloClaw")}
           </Button>
         </CardActions>

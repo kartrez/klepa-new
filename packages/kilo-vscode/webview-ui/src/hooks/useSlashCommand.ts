@@ -1,6 +1,7 @@
 import { createSignal, onCleanup } from "solid-js"
 import type { Accessor } from "solid-js"
 import type { SlashCommandInfo, WebviewMessage, ExtensionMessage } from "../types/messages"
+import { SITE_URL } from "../../../src/shared/branding"
 
 export const SLASH_PATTERN = /^\/(\S*)$/
 
@@ -88,7 +89,7 @@ export function useSlashCommand(vscode: VSCodeContext, exclude?: Set<string> | A
       description: "Open help documentation",
       hints: [],
       action: () => {
-        vscode.postMessage({ type: "openExternal", url: "https://kilo.ai/docs" })
+        vscode.postMessage({ type: "openExternal", url: SITE_URL })
       },
     },
     {

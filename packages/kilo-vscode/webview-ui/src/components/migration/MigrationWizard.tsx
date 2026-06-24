@@ -16,6 +16,7 @@ import SessionMigrationProgress, { type SessionMigrationProgressState } from "./
 import SessionMigrationSummary from "./SessionMigrationSummary"
 import ForceReimportDialog from "./ForceReimportDialog"
 import RunningMigrationDialog from "./RunningMigrationDialog"
+import { REPO_URL } from "../../../../src/shared/branding"
 import {
   createSessionItem,
   createSessionSummary,
@@ -49,7 +50,7 @@ const KiloLogo = (): JSX.Element => {
   const icon = isLight ? "kilo-light.png" : "kilo-dark.png"
   return (
     <div class="migration-wizard__logo">
-      <img src={`${iconsBaseUri}/${icon}`} alt="Kilo Code" />
+      <img src={`${iconsBaseUri}/${icon}`} alt="Klepa AI" />
     </div>
   )
 }
@@ -650,11 +651,8 @@ const MigrationWizard: Component<MigrationWizardProps> = (props) => {
           </div>
 
           <div class="migration-wizard__blog-link">
-            <a href="https://blog.kilo.ai/p/new-kilo-for-vs-code-is-live">
+            <a href={REPO_URL}>
               {language.t("migration.whatsNew.blogLink")} <span>&rarr;</span>
-            </a>
-            <a href="https://kilo.ai/docs/code-with-ai/platforms/vscode/whats-new">
-              {language.t("migration.whatsNew.docsLink")} <span>&rarr;</span>
             </a>
           </div>
 

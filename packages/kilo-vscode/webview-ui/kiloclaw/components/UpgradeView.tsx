@@ -4,6 +4,7 @@ import { Button } from "@kilocode/kilo-ui/button"
 import { Card, CardTitle, CardDescription, CardActions } from "@kilocode/kilo-ui/card"
 import { useClaw } from "../context/claw"
 import { useKiloClawLanguage } from "../context/language"
+import { SITE_URL } from "../../../src/shared/branding"
 
 export function UpgradeView() {
   const claw = useClaw()
@@ -23,7 +24,7 @@ export function UpgradeView() {
         </CardDescription>
         <CardActions>
           <div />
-          <Button variant="primary" onClick={() => claw.openExternal("https://app.kilo.ai/claw")}>
+          <Button variant="primary" onClick={() => claw.openExternal(SITE_URL)}>
             {t("kiloClaw.upgrade.openDashboard")}
           </Button>
         </CardActions>

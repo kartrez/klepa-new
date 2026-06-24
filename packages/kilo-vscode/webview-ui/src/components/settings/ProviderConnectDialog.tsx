@@ -12,6 +12,7 @@ import { useLanguage } from "../../context/language"
 import { useProvider } from "../../context/provider"
 import { useVSCode } from "../../context/vscode"
 import { createProviderAction } from "../../utils/provider-action"
+import { SITE_URL } from "../../../../src/shared/branding"
 import {
   ATOMIC_CHAT_PROVIDER_KEY,
   isLocalProviderOptionalApiKey,
@@ -410,10 +411,10 @@ const ProviderConnectDialog: Component<ProviderConnectDialogProps> = (props) => 
           <div class="provider-connect-byok">
             {language.t("provider.connect.kiloGateway.byok.prefix")}
             <a
-              href="https://blog.kilo.ai/p/kilo-gateway-now-supports-byok-20-providers"
+              href={SITE_URL}
               onClick={(e) => {
                 e.preventDefault()
-                openExternal("https://blog.kilo.ai/p/kilo-gateway-now-supports-byok-20-providers")
+                openExternal(SITE_URL)
               }}
               class="provider-connect-byok-link"
             >

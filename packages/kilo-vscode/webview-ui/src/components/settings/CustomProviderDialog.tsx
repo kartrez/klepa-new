@@ -16,6 +16,7 @@ import { useVSCode } from "../../context/vscode"
 import type { ExtensionMessage, ProviderAuthState, ProviderConfig } from "../../types/messages"
 import { createProviderAction } from "../../utils/provider-action"
 import { MASKED_CUSTOM_PROVIDER_KEY, resolveCustomProviderKey } from "../../../../src/shared/custom-provider"
+import { SITE_URL } from "../../../../src/shared/branding"
 import {
   CUSTOM_PROVIDER_PACKAGE,
   isCustomProviderPackage,
@@ -496,12 +497,12 @@ const CustomProviderDialog = (props: CustomProviderDialogProps) => {
           <div style={{ "font-size": "var(--kilo-font-size-14)", color: "var(--text-base)" }}>
             {language.t("provider.custom.description.prefix")}
             <a
-              href="https://kilo.ai/docs/ai-providers#custom-provider"
+              href={SITE_URL}
               onClick={(e) => {
                 e.preventDefault()
                 vscode.postMessage({
                   type: "openExternal",
-                  url: "https://kilo.ai/docs/ai-providers#custom-provider",
+                  url: SITE_URL,
                 })
               }}
             >

@@ -7,6 +7,7 @@ import { useVSCode } from "../../context/vscode"
 import { useConfig } from "../../context/config"
 import type { Config, ConnectionState, ExtensionMessage } from "../../types/messages"
 import { buildExport, parseImport, MAX_IMPORT_SIZE } from "./settings-io"
+import { REPO_URL, TELEGRAM_URL } from "../../../../src/shared/branding"
 
 export interface AboutKiloCodeTabProps {
   port: number | null
@@ -207,16 +208,12 @@ const AboutKiloCodeTab: Component<AboutKiloCodeTabProps> = (props) => {
           }}
         >
           {language.t("settings.aboutKiloCode.feedback.prefix")}{" "}
-          <span style={linkStyle} onClick={() => open("https://github.com/Kilo-Org/kilocode")}>
+          <span style={linkStyle} onClick={() => open(REPO_URL)}>
             GitHub
-          </span>
-          ,{" "}
-          <span style={linkStyle} onClick={() => open("https://reddit.com/r/kilocode")}>
-            Reddit
-          </span>
-          , {language.t("settings.aboutKiloCode.feedback.or")}{" "}
-          <span style={linkStyle} onClick={() => open("https://kilo.ai/discord")}>
-            Discord
+          </span>{" "}
+          {language.t("settings.aboutKiloCode.feedback.or")}{" "}
+          <span style={linkStyle} onClick={() => open(TELEGRAM_URL)}>
+            Telegram
           </span>
           .
         </p>
@@ -229,8 +226,8 @@ const AboutKiloCodeTab: Component<AboutKiloCodeTabProps> = (props) => {
           }}
         >
           {language.t("settings.aboutKiloCode.support.prefix")}{" "}
-          <span style={linkStyle} onClick={() => open("https://kilo.ai/support")}>
-            kilo.ai/support
+          <span style={linkStyle} onClick={() => open(TELEGRAM_URL)}>
+            @klepa_ai
           </span>
           .
         </p>

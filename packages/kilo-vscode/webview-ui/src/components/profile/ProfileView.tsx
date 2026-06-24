@@ -7,6 +7,7 @@ import { Tooltip } from "@kilocode/kilo-ui/tooltip"
 import { useVSCode } from "../../context/vscode"
 import { useLanguage } from "../../context/language"
 import DeviceAuthCard from "./DeviceAuthCard"
+import { SITE_URL } from "../../../../src/shared/branding"
 import type { ProfileData, DeviceAuthState } from "../../types/messages"
 
 export type { ProfileData }
@@ -90,7 +91,7 @@ const ProfileView: Component<ProfileViewProps> = (props) => {
   }
 
   const handleDashboard = () => {
-    vscode.postMessage({ type: "openExternal", url: "https://app.kilo.ai/profile" })
+    vscode.postMessage({ type: "openExternal", url: SITE_URL })
   }
 
   const handleCancelLogin = () => {

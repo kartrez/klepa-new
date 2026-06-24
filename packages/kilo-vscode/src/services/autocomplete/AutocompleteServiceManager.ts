@@ -13,6 +13,7 @@ import { toAllowedMercuryRecentSnippets } from "./next-edit/recentSnippetsAdapte
 import type { KiloConnectionService } from "../cli-backend"
 import { hasValidCredentials } from "./fim"
 import { DEFAULT_AUTOCOMPLETE_MODEL, getAutocompleteModel } from "../../shared/autocomplete-models"
+import { SITE_URL } from "../../shared/branding"
 
 const CONFIG_SECTION = "kilo-code.new.autocomplete"
 
@@ -392,7 +393,7 @@ export class AutocompleteServiceManager {
     if (status === 402) {
       vscode.window.showWarningMessage(msg, t("kilocode:autocomplete.creditsExhausted.addCredits")).then((choice) => {
         if (choice === t("kilocode:autocomplete.creditsExhausted.addCredits")) {
-          vscode.env.openExternal(vscode.Uri.parse("https://app.kilo.ai/credits"))
+          vscode.env.openExternal(vscode.Uri.parse(SITE_URL))
         }
       })
     } else {

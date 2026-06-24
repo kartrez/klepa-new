@@ -111,7 +111,7 @@ function localSource(root: string, dir: string) {
 
 export function content() {
   return `{
-  "$schema": "${SCHEMA}"
+  
 }
 `
 }
