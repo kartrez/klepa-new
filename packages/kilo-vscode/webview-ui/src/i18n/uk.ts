@@ -1018,9 +1018,7 @@ export const dict = {
   "session.cloud.import": "Імпортувати з хмари",
   "feedback.button": "Зворотний зв'язок і підтримка",
   "feedback.dialog.message": "Ми раді отримати ваш відгук або допомогти з будь-якими проблемами, які у вас виникли.",
-  "feedback.dialog.github": "Повідомити про проблему на GitHub",
-  "feedback.dialog.discord": "Приєднатися до нашої спільноти Discord",
-  "feedback.dialog.support": "Служба підтримки клієнтів",
+  "feedback.dialog.telegram": "Message us on Telegram — ",
   "workStyle.onboarding.welcome": "Ласкаво просимо до Kilo",
   "workStyle.onboarding.title": "Виберіть, як ви хочете працювати",
   "workStyle.onboarding.description":

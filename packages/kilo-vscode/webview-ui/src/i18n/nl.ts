@@ -1019,9 +1019,7 @@ export const dict = {
   "session.cloud.import": "Importeer uit de cloud",
   "feedback.button": "Feedback & Ondersteuning",
   "feedback.dialog.message": "We horen graag uw feedback of helpen met eventuele problemen die u ervaart.",
-  "feedback.dialog.github": "Meld een probleem op GitHub",
-  "feedback.dialog.discord": "Word lid van onze Discord community",
-  "feedback.dialog.support": "Klantenservice",
+  "feedback.dialog.telegram": "Message us on Telegram — ",
   "workStyle.onboarding.welcome": "Welkom bij Kilo",
   "workStyle.onboarding.title": "Kies hoe je wilt werken",
   "workStyle.onboarding.description":

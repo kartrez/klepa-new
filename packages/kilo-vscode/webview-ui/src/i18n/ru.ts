@@ -1067,9 +1067,7 @@ export const dict = {
   "session.cloud.import": "Импорт из облака",
   "feedback.button": "Отзывы и поддержка",
   "feedback.dialog.message": "Мы будем рады услышать ваши отзывы или помочь с любыми возникающими проблемами.",
-  "feedback.dialog.github": "Сообщить о проблеме на GitHub",
-  "feedback.dialog.discord": "Присоединиться к нашему Discord",
-  "feedback.dialog.support": "Служба поддержки",
+  "feedback.dialog.telegram": "Написать в Telegram — @klepa_ai",
   "workStyle.onboarding.welcome": "Добро пожаловать в Kilo",
   "workStyle.onboarding.title": "Выберите, как вы хотите работать",
   "workStyle.onboarding.description":
@@ -1285,8 +1283,9 @@ export const dict = {
   "settings.browser.headless.title": "Безголовый режим",
   "settings.browser.headless.description": "Запуск в безголовом режиме (без видимого окна браузера).",
 
-  "settings.language.description": "Выберите язык интерфейса Kilo Code. «Авто» использует язык отображения VS Code.",
-  "settings.language.auto": "Авто (язык VS Code)",
+  "settings.language.description":
+    "Выберите язык интерфейса (русский или английский). «Авто» — язык VS Code, иначе русский.",
+  "settings.language.auto": "Авто (язык VS Code, иначе русский)",
   "settings.language.current": "Текущий:",
 
   "common.add": "Добавить",

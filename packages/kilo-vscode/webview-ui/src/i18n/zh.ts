@@ -1034,9 +1034,7 @@ export const dict = {
   "session.cloud.import": "从云端导入",
   "feedback.button": "反馈与支持",
   "feedback.dialog.message": "我们很乐意听取您的反馈，或帮助解决您遇到的任何问题。",
-  "feedback.dialog.github": "在 GitHub 上报告问题",
-  "feedback.dialog.discord": "加入我们的 Discord 社区",
-  "feedback.dialog.support": "客户支持",
+  "feedback.dialog.telegram": "Message us on Telegram — ",
   "workStyle.onboarding.welcome": "欢迎使用 Kilo",
   "workStyle.onboarding.title": "选择你想要的工作方式",
   "workStyle.onboarding.description":

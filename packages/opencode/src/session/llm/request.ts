@@ -24,6 +24,7 @@ import {
 } from "@kilocode/kilo-gateway"
 import { Identity } from "@kilocode/kilo-telemetry"
 import { KiloSession } from "@/kilocode/session"
+import { isKlepaProvider, klepaTrafficHeaders, KLEPA_TRAFFIC_SOURCE } from "@/kilocode/provider/gpt-chat-by" // kilocode_change
 // kilocode_change end
 
 type PrepareInput = {
@@ -227,6 +228,7 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
       ...(isKilo && parent ? { [HEADER_PARENT_TASKID]: parent } : {}),
       ...(isKilo && attr.feature ? { [HEADER_FEATURE]: attr.feature } : {}),
       // kilocode_change end
+      ...(isKlepaProvider(input.model.providerID) ? klepaTrafficHeaders() : {}), // kilocode_change
       ...input.model.headers,
       ...headers,
     },

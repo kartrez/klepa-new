@@ -1017,9 +1017,7 @@ export const dict = {
   "feedback.button": "Geri Bildirim ve Destek",
   "feedback.dialog.message":
     "Geri bildiriminizi almaktan veya yaşadığınız sorunlarda yardımcı olmaktan mutluluk duyarız.",
-  "feedback.dialog.github": "GitHub'da sorun bildirin",
-  "feedback.dialog.discord": "Discord topluluğumuza katılın",
-  "feedback.dialog.support": "Müşteri Desteği",
+  "feedback.dialog.telegram": "Message us on Telegram — ",
   "workStyle.onboarding.welcome": "Kilo'ya hoş geldiniz",
   "workStyle.onboarding.title": "Nasıl çalışmak istediğinizi seçin",
   "workStyle.onboarding.description":

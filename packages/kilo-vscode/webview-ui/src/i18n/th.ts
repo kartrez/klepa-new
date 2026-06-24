@@ -1052,9 +1052,7 @@ export const dict = {
   "session.cloud.import": "นำเข้าจากคลาวด์",
   "feedback.button": "ข้อเสนอแนะและการสนับสนุน",
   "feedback.dialog.message": "เรายินดีรับฟังข้อเสนอแนะของคุณหรือช่วยแก้ไขปัญหาที่คุณพบ",
-  "feedback.dialog.github": "รายงานปัญหาบน GitHub",
-  "feedback.dialog.discord": "เข้าร่วมชุมชน Discord ของเรา",
-  "feedback.dialog.support": "ฝ่ายสนับสนุนลูกค้า",
+  "feedback.dialog.telegram": "Message us on Telegram — ",
   "workStyle.onboarding.welcome": "ยินดีต้อนรับสู่ Kilo",
   "workStyle.onboarding.title": "เลือกวิธีที่คุณต้องการทำงาน",
   "workStyle.onboarding.description":

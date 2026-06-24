@@ -7,7 +7,7 @@
 // calls at well-defined injection points (each marked with kilocode_change).
 
 import { createKilo, type KiloProvider, AI_SDK_PROVIDERS, PROMPTS } from "@kilocode/kilo-gateway"
-import { GPT_CHAT_BY_PROVIDER_ID } from "./gpt-chat-by"
+import { GPT_CHAT_BY_PROVIDER_ID, klepaTrafficHeaders } from "./gpt-chat-by"
 import { DEFAULT_HEADERS } from "@/kilocode/const"
 import { ProviderID, ModelID } from "@/provider/schema"
 import { optionalOmitUndefined } from "@opencode-ai/core/schema"
@@ -150,7 +150,10 @@ export function kiloCustomLoaders(dep: CustomDep): Record<string, CustomLoader> 
 
       return {
         autoload: !!key || Object.keys(input.models).length > 0,
-        options: key ? { apiKey: key } : {},
+        options: {
+          ...(key ? { apiKey: key } : {}),
+          headers: klepaTrafficHeaders(),
+        },
       }
     }),
 

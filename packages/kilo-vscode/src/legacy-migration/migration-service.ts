@@ -714,40 +714,17 @@ async function migrateAutocomplete(settings: LegacyAutocompleteSettings): Promis
   }
 }
 
-// Maps legacy locale codes to their new-extension equivalents.
-// Legacy used IETF BCP-47 tags (zh-CN, pt-BR) while the new extension uses short codes.
-// Entries absent from this map have no equivalent in the new extension.
+// Maps legacy locale codes to Klepa-supported locales (en, ru).
 const LEGACY_LOCALE_MAP: Record<string, string> = {
-  // Direct matches
   en: "en",
-  de: "de",
-  es: "es",
-  fr: "fr",
-  ja: "ja",
-  ko: "ko",
-  pl: "pl",
   ru: "ru",
-  ar: "ar",
-  th: "th",
-  da: "da",
-  no: "no",
-  bs: "bs",
-  // Format changes
-  "zh-CN": "zh",
-  "zh-TW": "zht",
-  "pt-BR": "br",
+  "en-US": "en",
+  "ru-RU": "ru",
 }
 
 async function migrateLanguage(language: string): Promise<MigrationResultItem> {
-  const mapped = LEGACY_LOCALE_MAP[language]
-  if (!mapped) {
-    return {
-      item: "Language preference",
-      category: "settings",
-      status: "warning",
-      message: `Language "${language}" is not supported in the new version`,
-    }
-  }
+  const lower = language.toLowerCase()
+  const mapped = LEGACY_LOCALE_MAP[language] ?? (lower.startsWith("en") ? "en" : "ru")
   try {
     const config = vscode.workspace.getConfiguration("kilo-code.new")
     await config.update("language", mapped, vscode.ConfigurationTarget.Global)

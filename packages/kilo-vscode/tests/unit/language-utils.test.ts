@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test"
-import { normalizeLocale, resolveTemplate } from "../../webview-ui/src/context/language-utils"
+import { DEFAULT_LOCALE, normalizeLocale, resolveTemplate } from "../../webview-ui/src/context/language-utils"
 
 describe("normalizeLocale", () => {
   it("returns 'en' for English", () => {
@@ -8,55 +8,20 @@ describe("normalizeLocale", () => {
     expect(normalizeLocale("en-GB")).toBe("en")
   })
 
-  it("returns 'zh' for Simplified Chinese", () => {
-    expect(normalizeLocale("zh")).toBe("zh")
-    expect(normalizeLocale("zh-CN")).toBe("zh")
-    expect(normalizeLocale("zh-Hans")).toBe("zh")
+  it("returns 'ru' for Russian", () => {
+    expect(normalizeLocale("ru")).toBe("ru")
+    expect(normalizeLocale("ru-RU")).toBe("ru")
   })
 
-  it("returns 'zht' for Traditional Chinese", () => {
-    expect(normalizeLocale("zht")).toBe("zht")
-    expect(normalizeLocale("zh-Hant")).toBe("zht")
-    expect(normalizeLocale("zh-TW")).toBe("zht")
-    expect(normalizeLocale("zh-HK")).toBe("zht")
-    expect(normalizeLocale("zh-MO")).toBe("zht")
-    expect(normalizeLocale("zh-hant-TW")).toBe("zht")
-  })
-
-  it("returns 'de' for German", () => {
-    expect(normalizeLocale("de")).toBe("de")
-    expect(normalizeLocale("de-AT")).toBe("de")
-  })
-
-  it("returns 'ko' for Korean", () => {
-    expect(normalizeLocale("ko")).toBe("ko")
-    expect(normalizeLocale("ko-KR")).toBe("ko")
-  })
-
-  it("returns 'no' for Norwegian Bokmål", () => {
-    expect(normalizeLocale("nb")).toBe("no")
-    expect(normalizeLocale("nb-NO")).toBe("no")
-  })
-
-  it("returns 'no' for Norwegian Nynorsk", () => {
-    expect(normalizeLocale("nn")).toBe("no")
-  })
-
-  it("returns 'br' for Portuguese", () => {
-    expect(normalizeLocale("pt")).toBe("br")
-    expect(normalizeLocale("pt-BR")).toBe("br")
-    expect(normalizeLocale("pt-PT")).toBe("br")
-  })
-
-  it("falls back to 'en' for unknown locale", () => {
-    expect(normalizeLocale("xx")).toBe("en")
-    expect(normalizeLocale("xyz-ZZ")).toBe("en")
+  it("falls back to Russian for unsupported locales", () => {
+    expect(normalizeLocale("de")).toBe(DEFAULT_LOCALE)
+    expect(normalizeLocale("zh-CN")).toBe(DEFAULT_LOCALE)
+    expect(normalizeLocale("xx")).toBe(DEFAULT_LOCALE)
   })
 
   it("is case-insensitive", () => {
     expect(normalizeLocale("EN")).toBe("en")
-    expect(normalizeLocale("DE")).toBe("de")
-    expect(normalizeLocale("ZH-HANT")).toBe("zht")
+    expect(normalizeLocale("RU")).toBe("ru")
   })
 })
 

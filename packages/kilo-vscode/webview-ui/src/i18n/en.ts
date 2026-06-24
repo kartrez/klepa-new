@@ -982,9 +982,7 @@ export const dict = {
   "session.cloud.import": "Import session",
   "feedback.button": "Feedback & Support",
   "feedback.dialog.message": "We'd love to hear your feedback or help with any issues you're experiencing.",
-  "feedback.dialog.github": "Report an issue on GitHub",
-  "feedback.dialog.discord": "Join our Discord community",
-  "feedback.dialog.support": "Customer Support",
+  "feedback.dialog.telegram": "Message us on Telegram — @klepa_ai",
   "workStyle.onboarding.welcome": "Welcome to Kilo",
   "workStyle.onboarding.title": "Choose how you want to work",
   "workStyle.onboarding.description":
@@ -1260,8 +1258,8 @@ export const dict = {
   "settings.browser.headless.description": "Run in headless mode (no visible browser window).",
 
   "settings.language.description":
-    'Choose the language for the Kilo Code UI. "Auto" uses your VS Code display language.',
-  "settings.language.auto": "Auto (VS Code language)",
+    'Choose the interface language (English or Russian). "Auto" uses VS Code display language, falling back to Russian.',
+  "settings.language.auto": "Auto (VS Code language, Russian fallback)",
   "settings.language.current": "Current:",
 
   "common.add": "Add",

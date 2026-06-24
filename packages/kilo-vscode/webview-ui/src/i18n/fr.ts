@@ -1081,9 +1081,7 @@ export const dict = {
   "feedback.button": "Commentaires & support",
   "feedback.dialog.message":
     "Nous aimerions recueillir vos commentaires ou vous aider avec les problèmes que vous rencontrez.",
-  "feedback.dialog.github": "Signaler un problème sur GitHub",
-  "feedback.dialog.discord": "Rejoindre notre communauté Discord",
-  "feedback.dialog.support": "Service client",
+  "feedback.dialog.telegram": "Message us on Telegram — ",
   "workStyle.onboarding.welcome": "Bienvenue dans Kilo",
   "workStyle.onboarding.title": "Choisissez votre façon de travailler",
   "workStyle.onboarding.settingsNote": "Vous pouvez modifier ces options à tout moment dans les",
