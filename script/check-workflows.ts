@@ -25,36 +25,8 @@ import path from "node:path"
 const ROOT = path.resolve(import.meta.dir, "..")
 const DIR = path.join(ROOT, ".github", "workflows")
 
-// Workflows we have deliberately accepted into CI. Sort alphabetically.
-const active = new Set([
-  "auto-docs.yml",
-  "beta.yml",
-  "check-forbidden-strings.yml",
-  "check-kilo-generated-artifacts.yml",
-  "check-md-table-padding.yml",
-  "check-opencode-annotations.yml",
-  "check-org-member.yml",
-  "codeql-kotlin.yml",
-  "codeql.yml",
-  "containers.yml",
-  "docs-build.yml",
-  "docs-check-links.yml",
-  "generate.yml",
-  "kilo-auto-close.yml",
-  "nix-eval.yml",
-  "nix-hashes.yml",
-  "prepare-jetbrains-release.yml",
-  "publish-jetbrains.yml",
-  "publish.yml",
-  "smoke-test.yml",
-  "source-check-links.yml",
-  "test-jetbrains.yml",
-  "test-vscode.yml",
-  "test.yml",
-  "typecheck.yml",
-  "visual-regression.yml",
-  "watch-opencode-releases.yml",
-])
+// Klepa CI: typecheck, vscode tests, marketplace publish only.
+const active = new Set(["publish-extension.yml", "test-vscode.yml", "typecheck.yml"])
 
 // GitHub picks up both .yml and .yaml in .github/workflows/. We accept both so
 // an upstream `.yaml` addition also shows up as unexpected drift.
@@ -78,8 +50,5 @@ if (errs.length === 0) {
   process.exit(0)
 }
 
-for (const e of errs) console.error(e)
-console.error("")
-console.error(`Found ${errs.length} workflow drift issue(s).`)
-console.error("This guard prevents upstream-merged workflows from silently running in our CI.")
+console.error("check-workflows failed:\n" + errs.map((e) => `  - ${e}`).join("\n"))
 process.exit(1)

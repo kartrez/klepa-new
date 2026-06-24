@@ -4,7 +4,7 @@ export const KLEPA_DEFAULT_MODEL_ID = "klepa/auto"
 
 export const GPT_CHAT_BY_PROVIDER_ID = "klepa"
 
-export const KLEPA_TRAFFIC_SOURCE = `Klepa-AI v${InstallationVersion}`
+export const KLEPA_TRAFFIC_SOURCE = `Klepa-AI v-${InstallationVersion}`
 
 export function isKlepaProvider(id: string) {
   return id === GPT_CHAT_BY_PROVIDER_ID || id === "gpt-chat-by"

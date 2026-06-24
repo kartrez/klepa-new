@@ -15,7 +15,7 @@ export const GPT_CHAT_BY_API_BASE = "https://api.gpt-chat.by/api/"
 
 export const GPT_CHAT_BY_AUTH_URL = "https://gpt-chat.by/vscode-auth/"
 
-export const GPT_CHAT_BY_TOKEN_URL = "https://gpt-chat.by/"
+export const GPT_CHAT_BY_TOKEN_URL = "https://gpt-chat.by/keys"
 
 export const GPT_CHAT_BY_DEFAULT_CONFIG = {
   enabled_providers: [GPT_CHAT_BY_PROVIDER_ID],

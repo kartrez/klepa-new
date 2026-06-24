@@ -1,0 +1,81 @@
+name: Publish Extension
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Override version (optional, workflow_dispatch only)"
+        required: false
+        type: string
+      pre_release:
+        description: "Publish as VS Code Marketplace pre-release"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: publish-extension-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.repository == 'kartrez/klepa-new'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: ./.github/actions/setup-bun
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Install @vscode/vsce
+        run: bun install -g @vscode/vsce
+
+      - name: Get version
+        id: get-version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            current_package_version="${GITHUB_REF#refs/tags/v}"
+          elif [[ -n "${{ inputs.version }}" ]]; then
+            current_package_version="${{ inputs.version }}"
+          else
+            current_package_version=$(node -p "require('./packages/kilo-vscode/package.json').version")
+          fi
+          echo "version=${current_package_version}" >> "$GITHUB_OUTPUT"
+          echo "Version: ${current_package_version}"
+
+      - name: Update package.json version
+        working-directory: packages/kilo-vscode
+        run: npm version "${{ steps.get-version.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Build CLI
+        run: ./packages/opencode/script/build.ts
+        env:
+          KILO_VERSION: ${{ steps.get-version.outputs.version }}
+
+      - name: Build VSIX packages
+        working-directory: packages/kilo-vscode
+        run: bun script/build.ts
+        env:
+          CLI_DIST_DIR: ../../packages/opencode/dist
+          KILO_VERSION: ${{ steps.get-version.outputs.version }}
+          KILO_PRE_RELEASE: ${{ inputs.pre_release && 'true' || 'false' }}
+
+      - name: Publish to VS Code Marketplace
+        working-directory: packages/kilo-vscode
+        env:
+          VSCE_PAT: ${{ secrets.VSCODE_MARKETPLACE_TOKEN }}
+          KILO_PRE_RELEASE: ${{ inputs.pre_release && 'true' || 'false' }}
+        run: bun script/publish-extension.ts
