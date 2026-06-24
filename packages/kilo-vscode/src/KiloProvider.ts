@@ -976,8 +976,11 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
           this.postMessage({ type: "deviceAuthCancelled" })
           break
         case "logout":
-          await handleLogout(this.authCtx)
           this.storedProviderKeys = {}
+          await handleLogout(this.authCtx)
+          await this.fetchAndSendProviders().catch((error) => {
+            console.warn("[Kilo New] KiloProvider: fetchAndSendProviders after logout failed:", error)
+          })
           break
         case "setOrganization":
           if (typeof message.organizationId === "string" || message.organizationId === null) {

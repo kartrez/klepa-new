@@ -72,7 +72,7 @@
     ],
     "icons": {
       "kilo-logo": {
-        "description": "Kilo Code logo",
+        "description": "Klepa logo",
         "default": {
           "fontPath": "assets/icons/kilo-icon-font.woff2",
           "fontCharacter": "\\F101"
@@ -159,8 +159,8 @@
         "title": "Open in Tab",
         "category": "Kilo Code",
         "icon": {
-          "light": "assets/icons/kilo-light.svg",
-          "dark": "assets/icons/kilo-dark.svg"
+          "light": "assets/icons/kilo-light.png",
+          "dark": "assets/icons/kilo-dark.png"
         }
       },
       {
@@ -332,8 +332,8 @@
         "title": "Generate Commit Message",
         "category": "Kilo Code",
         "icon": {
-          "light": "assets/icons/kilo-light.svg",
-          "dark": "assets/icons/kilo-dark.svg"
+          "light": "assets/icons/kilo-light.png",
+          "dark": "assets/icons/kilo-dark.png"
         }
       },
       {
@@ -1014,6 +1014,7 @@
   },
   "scripts": {
     "prepare:cli-binary": "bun script/local-bin.ts",
+    "build:icon-font": "bun script/build-icon-font.ts",
     "compile": "bun run prepare:cli-binary -- --force && bun run rebuild-sdk && bun run typecheck && bun run lint && node esbuild.js",
     "watch": "bun run rebuild-sdk && bun run --parallel watch:esbuild watch:tsc",
     "watch:esbuild": "bun run prepare:cli-binary && node esbuild.js --watch",
@@ -1059,6 +1060,7 @@
     "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.27.2",
     "esbuild-plugin-solid": "^0.6.0",
+    "fantasticon": "^3.0.0",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "happy-dom": "20.8.9",

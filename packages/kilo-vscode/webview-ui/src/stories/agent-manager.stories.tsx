@@ -222,6 +222,7 @@ const chatServer = {
   balance: () => "15.50",
   balanceBusy: () => false,
   refreshBalance: () => undefined,
+  logout: () => undefined,
   startLogin: () => undefined,
   goToLogin: () => undefined,
   vscodeLanguage: () => "en",

@@ -85,6 +85,7 @@ import { WorktreeModeProvider } from "../src/context/worktree-mode"
 import { ChatView } from "../src/components/chat"
 import HistoryView from "../src/components/history/HistoryView"
 import { NewWorktreeDialog } from "./NewWorktreeDialog"
+import { KlepaAuthGate } from "../src/components/auth/KlepaAuthGate"
 import { DataBridge, MermaidDownloadBridge } from "../src/App"
 import { LanguageBridge } from "../src/context/language-bridge"
 import { useLanguage } from "../src/context/language"
@@ -3139,7 +3140,9 @@ export const AgentManagerApp: Component = () => {
                                     <FeedbackProvider>
                                       <WorktreeModeProvider>
                                         <DataBridge>
-                                          <AgentManagerContent />
+                                          <KlepaAuthGate>
+                                            <AgentManagerContent />
+                                          </KlepaAuthGate>
                                         </DataBridge>
                                       </WorktreeModeProvider>
                                     </FeedbackProvider>

@@ -39,6 +39,7 @@ export const ProviderProvider: ParentComponent = (props) => {
   const [defaultSelection, setDefaultSelection] = createSignal<ModelSelection>(KILO_AUTO)
   const [authMethods, setAuthMethods] = createSignal<Record<string, ProviderAuthMethod[]>>({})
   const [authStates, setAuthStates] = createSignal<Record<string, ProviderAuthState>>({})
+  const [klepaOut, setKlepaOut] = createSignal(false)
 
   const models = createMemo<EnrichedModel[]>(() => flattenModels(providers()))
 
@@ -50,14 +51,22 @@ export const ProviderProvider: ParentComponent = (props) => {
     return isValid(providers(), connected(), selection)
   }
 
+  const stripKlepa = (states: Record<string, ProviderAuthState>) => {
+    const next = { ...states }
+    delete next[GPT_CHAT_BY_PROVIDER_ID]
+    delete next["gpt-chat-by"]
+    return next
+  }
+
   const clearKlepaAuth = () => {
-    setAuthStates((prev) => {
-      const next = { ...prev }
-      delete next[GPT_CHAT_BY_PROVIDER_ID]
-      delete next["gpt-chat-by"]
-      return next
-    })
+    setKlepaOut(true)
+    setAuthStates((prev) => stripKlepa(prev))
     setConnected((prev) => prev.filter((id) => id !== GPT_CHAT_BY_PROVIDER_ID && id !== "gpt-chat-by"))
+  }
+
+  const applyAuthStates = (states: Record<string, ProviderAuthState>) => {
+    if (klepaOut()) return stripKlepa(states)
+    return states
   }
 
   // Register handler immediately (not in onMount) so we never miss
@@ -69,12 +78,16 @@ export const ProviderProvider: ParentComponent = (props) => {
       setDefaults(message.defaults)
       setDefaultSelection(message.defaultSelection)
       setAuthMethods(message.authMethods)
-      setAuthStates(message.authStates)
+      setAuthStates(applyAuthStates(message.authStates))
       return
     }
 
     if (message.type === "authLoggedOut") {
       clearKlepaAuth()
+    }
+
+    if (message.type === "authComplete") {
+      setKlepaOut(false)
     }
   })
 

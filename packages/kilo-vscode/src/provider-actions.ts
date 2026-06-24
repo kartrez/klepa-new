@@ -93,9 +93,6 @@ export async function fetchProviderData(client: KiloClient, dir: string) {
   })
   delete authStates[KILO_PROVIDER_ID]
   if (kiloAuth) authStates[KILO_PROVIDER_ID] = kiloAuth
-  if (response.connected.includes(GPT_CHAT_BY_PROVIDER_ID) || response.connected.includes("gpt-chat-by")) {
-    authStates[GPT_CHAT_BY_PROVIDER_ID] = "api"
-  }
   return { response: { ...response, all }, authMethods, authStates, storedKeys }
 }
 

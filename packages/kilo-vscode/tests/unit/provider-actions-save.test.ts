@@ -569,6 +569,39 @@ describe("fetchProviderData", () => {
     expect(result.storedKeys).toEqual({
       klepa: { key: "klepa-token", baseURL: "https://api.gpt-chat.by/api/" },
     })
+    expect(result.authStates).toEqual({ klepa: "api" })
+  })
+
+  it("does not mark klepa authenticated when connected without a stored key", async () => {
+    const client = {
+      provider: {
+        list: async () => ({
+          data: {
+            all: [
+              {
+                id: "klepa",
+                name: "Klepa",
+                source: "api",
+                env: [],
+                options: {},
+                models: { "klepa/auto": { name: "Auto" } },
+              },
+            ],
+            connected: ["klepa"],
+            default: {},
+          },
+        }),
+        auth: async () => ({ data: {} }),
+      },
+      kilo: {
+        authStatus: async () => ({ data: { authenticated: false } }),
+      },
+    } as unknown as Parameters<typeof fetchProviderData>[0]
+
+    const result = await fetchProviderData(client, "/tmp")
+
+    expect(result.authStates).toEqual({})
+    expect(result.storedKeys).toEqual({})
   })
 })
 

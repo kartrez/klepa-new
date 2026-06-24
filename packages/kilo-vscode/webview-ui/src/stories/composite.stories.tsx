@@ -1332,6 +1332,7 @@ export const DiffSummaryCollapsed: Story = {
       balance: () => "15.50",
       balanceBusy: () => false,
       refreshBalance: () => {},
+      logout: () => {},
       startLogin: () => {},
       goToLogin: () => {},
       vscodeLanguage: () => "en",

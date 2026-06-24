@@ -560,8 +560,8 @@ async function openKiloInNewTab(
   })
 
   panel.iconPath = {
-    light: vscode.Uri.joinPath(context.extensionUri, "assets", "icons", "kilo-light.svg"),
-    dark: vscode.Uri.joinPath(context.extensionUri, "assets", "icons", "kilo-dark.svg"),
+    light: vscode.Uri.joinPath(context.extensionUri, "assets", "icons", "kilo-light.png"),
+    dark: vscode.Uri.joinPath(context.extensionUri, "assets", "icons", "kilo-dark.png"),
   }
 
   const tabProvider = new KiloProvider(context.extensionUri, connectionService, context, {

@@ -885,6 +885,7 @@ const mockServer = {
   balance: () => "5.00",
   balanceBusy: () => false,
   refreshBalance: () => {},
+  logout: () => {},
   startLogin: () => {},
   goToLogin: () => {},
   vscodeLanguage: () => "en",

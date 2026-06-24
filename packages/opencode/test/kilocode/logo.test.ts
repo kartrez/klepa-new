@@ -35,6 +35,7 @@ describe("kilocode logo", () => {
   test("formats child session exit logo", () => {
     const out = session("Title", "ses_test", "<dim>", "<reset>", {}, "win32")
     expect(out).toContain("<dim>Title<reset>")
+    expect(out).toContain("klepa -s ses_test")
     expect(out).not.toContain("🬺🬏")
   })
 })

@@ -93,10 +93,6 @@ export async function handleLogout(ctx: AuthContext): Promise<void> {
   await ctx.disposeGlobal().catch((error) => {
     console.warn("[Kilo New] KiloProvider: disposeGlobal after logout failed:", error)
   })
-
-  await ctx.fetchAndSendProviders().catch((error) => {
-    console.warn("[Kilo New] KiloProvider: fetchAndSendProviders after logout failed:", error)
-  })
 }
 
 /**
