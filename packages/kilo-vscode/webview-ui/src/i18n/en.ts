@@ -1080,6 +1080,8 @@ export const dict = {
   "gptChatBy.auth.waiting": "Waiting for sign-in...",
   "profile.balance.title": "Balance",
   "profile.balance.refresh": "Refresh balance",
+  "account.topUp": "Top up",
+  "account.topUpAmount": "${{amount}}",
   "profile.action.dashboard": "Dashboard",
   "profile.action.logout": "Log Out",
 

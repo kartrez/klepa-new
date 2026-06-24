@@ -11,6 +11,8 @@ import type { Provider, ProviderModel, ModelSelection, ExtensionMessage, Provide
 import type { ProviderAuthMethod } from "@kilocode/sdk/v2/client"
 import { flattenModels, findModel as _findModel, isModelValid as isValid } from "./provider-utils"
 import { KILO_AUTO } from "../../../src/shared/provider-model"
+import { GPT_CHAT_BY_PROVIDER_ID } from "../../../src/shared/gpt-chat-by"
+import { KLEPA_LOGOUT_EVENT } from "../klepa-auth-events"
 
 export type EnrichedModel = ProviderModel & { providerID: string; providerName: string }
 
@@ -48,22 +50,41 @@ export const ProviderProvider: ParentComponent = (props) => {
     return isValid(providers(), connected(), selection)
   }
 
+  const clearKlepaAuth = () => {
+    setAuthStates((prev) => {
+      const next = { ...prev }
+      delete next[GPT_CHAT_BY_PROVIDER_ID]
+      delete next["gpt-chat-by"]
+      return next
+    })
+    setConnected((prev) => prev.filter((id) => id !== GPT_CHAT_BY_PROVIDER_ID && id !== "gpt-chat-by"))
+  }
+
   // Register handler immediately (not in onMount) so we never miss
   // a providersLoaded message that arrives before the DOM mount.
   const unsubscribe = vscode.onMessage((message: ExtensionMessage) => {
-    if (message.type !== "providersLoaded") {
+    if (message.type === "providersLoaded") {
+      setProviders(message.providers)
+      setConnected(message.connected)
+      setDefaults(message.defaults)
+      setDefaultSelection(message.defaultSelection)
+      setAuthMethods(message.authMethods)
+      setAuthStates(message.authStates)
       return
     }
 
-    setProviders(message.providers)
-    setConnected(message.connected)
-    setDefaults(message.defaults)
-    setDefaultSelection(message.defaultSelection)
-    setAuthMethods(message.authMethods)
-    setAuthStates(message.authStates)
+    if (message.type === "authLoggedOut") {
+      clearKlepaAuth()
+    }
   })
 
-  onCleanup(unsubscribe)
+  const onLogout = () => clearKlepaAuth()
+  window.addEventListener(KLEPA_LOGOUT_EVENT, onLogout)
+
+  onCleanup(() => {
+    unsubscribe()
+    window.removeEventListener(KLEPA_LOGOUT_EVENT, onLogout)
+  })
 
   // Request providers immediately; if the extension's httpClient is not yet ready,
   // extensionDataReady will fire once initialization completes and we retry once.

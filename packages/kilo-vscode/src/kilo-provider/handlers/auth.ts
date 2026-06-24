@@ -79,23 +79,24 @@ export async function handleLogin(ctx: AuthContext, attempt: number, getAttempt:
 export async function handleLogout(ctx: AuthContext): Promise<void> {
   if (!ctx.client) return
 
-  try {
-    console.log("[Kilo New] KiloProvider: 🚪 Logging out...")
-    await ctx.client.auth.remove({ providerID: GPT_CHAT_BY_PROVIDER_ID }, { throwOnError: true })
-    console.log("[Kilo New] KiloProvider: 🚪 Logged out successfully")
-    ctx.postMessage({ type: "profileData", data: null })
-    ctx.postMessage({ type: "authLoggedOut" })
-
-    await ctx.disposeGlobal()
-
-    await ctx.fetchAndSendProviders()
-  } catch (error) {
-    console.error("[Kilo New] KiloProvider: ❌ Logout failed:", error)
-    ctx.postMessage({
-      type: "error",
-      message: getErrorMessage(error) || "Failed to logout",
+  console.log("[Kilo New] KiloProvider: 🚪 Logging out...")
+  const ids = [GPT_CHAT_BY_PROVIDER_ID, "gpt-chat-by"] as const
+  for (const providerID of ids) {
+    await ctx.client.auth.remove({ providerID }, { throwOnError: false }).catch((error) => {
+      console.warn("[Kilo New] KiloProvider: auth.remove failed for", providerID, error)
     })
   }
+
+  ctx.postMessage({ type: "profileData", data: null })
+  ctx.postMessage({ type: "authLoggedOut" })
+
+  await ctx.disposeGlobal().catch((error) => {
+    console.warn("[Kilo New] KiloProvider: disposeGlobal after logout failed:", error)
+  })
+
+  await ctx.fetchAndSendProviders().catch((error) => {
+    console.warn("[Kilo New] KiloProvider: fetchAndSendProviders after logout failed:", error)
+  })
 }
 
 /**

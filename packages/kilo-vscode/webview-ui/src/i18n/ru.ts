@@ -1167,6 +1167,8 @@ export const dict = {
   "gptChatBy.auth.waiting": "Ожидание входа...",
   "profile.balance.title": "Баланс",
   "profile.balance.refresh": "Обновить баланс",
+  "account.topUp": "Пополнить",
+  "account.topUpAmount": "${{amount}}",
   "profile.action.dashboard": "Панель управления",
   "profile.action.logout": "Выйти",
 

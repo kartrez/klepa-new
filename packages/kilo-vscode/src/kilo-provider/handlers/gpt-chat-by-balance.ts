@@ -37,3 +37,27 @@ export async function fetchKlepaBalance(token: string | null | undefined) {
   if (data.balance === undefined || data.balance === null) return null
   return String(data.balance)
 }
+
+export type KlepaTopUpSupply = "API_BALANCE" | "COPI_CODE_SUBSCRIBE" | "COPI_CODE_SUBSCRIBE_YEAR"
+
+export async function fetchKlepaTopUp(
+  token: string,
+  supply: KlepaTopUpSupply,
+  amount?: number,
+) {
+  const url = new URL("copy-code/balance/top-up", GPT_CHAT_BY_API_BASE)
+  url.searchParams.set("supply", supply)
+  if (amount !== undefined) url.searchParams.set("amount", String(amount))
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+  })
+  if (!res.ok) throw new Error(`Top-up request failed (${res.status})`)
+
+  const data = (await res.json()) as { url?: string }
+  if (!data.url) throw new Error("Missing payment URL")
+  return data.url
+}

@@ -7,6 +7,7 @@ import { createContext, useContext, createSignal, onMount, onCleanup, ParentComp
 import { useVSCode } from "./vscode"
 import type { ConnectionState, ServerInfo, ProfileData, DeviceAuthState, ExtensionMessage } from "../types/messages"
 import { applyFontSize } from "../font-size"
+import { KLEPA_LOGOUT_EVENT } from "../klepa-auth-events"
 
 interface ServerContextValue {
   connectionState: Accessor<ConnectionState>
@@ -23,6 +24,7 @@ interface ServerContextValue {
   balance: Accessor<string | null | undefined>
   balanceBusy: Accessor<boolean>
   refreshBalance: () => void
+  logout: () => void
   startLogin: () => void
   goToLogin: () => void
   vscodeLanguage: Accessor<string | undefined>
@@ -268,8 +270,16 @@ export const ServerProvider: ParentComponent = (props) => {
     vscode.postMessage({ type: "refreshBalance" })
   }
 
-  const goToLogin = () => {
+  const logout = () => {
+    setGptAuthed(false)
+    setBalance(undefined)
+    setBalanceBusy(false)
+    window.dispatchEvent(new CustomEvent(KLEPA_LOGOUT_EVENT))
     vscode.postMessage({ type: "logout" })
+  }
+
+  const goToLogin = () => {
+    logout()
   }
 
   const value: ServerContextValue = {
@@ -287,6 +297,7 @@ export const ServerProvider: ParentComponent = (props) => {
     balance,
     balanceBusy,
     refreshBalance,
+    logout,
     startLogin,
     goToLogin,
     vscodeLanguage,

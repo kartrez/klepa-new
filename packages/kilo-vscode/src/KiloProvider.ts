@@ -154,7 +154,8 @@ import type { StoredProviderKey } from "./provider-actions"
 import { fetchOpenAIModels, FetchModelsError } from "./shared/fetch-models"
 import type { Agent } from "@kilocode/sdk/v2/client"
 import { EXTENSION_ID, GPT_CHAT_BY_PROVIDER_ID } from "./shared/gpt-chat-by"
-import { fetchKlepaBalance, resolveKlepaToken } from "./kilo-provider/handlers/gpt-chat-by-balance"
+import { fetchKlepaBalance, fetchKlepaTopUp, resolveKlepaToken } from "./kilo-provider/handlers/gpt-chat-by-balance"
+import type { KlepaTopUpSupply } from "./kilo-provider/handlers/gpt-chat-by-balance"
 import { createAutoApproveBridge } from "./kilo-provider/auto-approve"
 import type { KiloProviderOptions } from "./kilo-provider/options"
 import { fetchKiloEmbeddingModelCatalog } from "@kilocode/kilo-gateway"
@@ -976,6 +977,7 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
           break
         case "logout":
           await handleLogout(this.authCtx)
+          this.storedProviderKeys = {}
           break
         case "setOrganization":
           if (typeof message.organizationId === "string" || message.organizationId === null) {
@@ -987,6 +989,11 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
           break
         case "refreshBalance":
           await this.handleRefreshBalance()
+          break
+        case "klepaTopUp":
+          if (typeof message.supply === "string") {
+            await this.handleKlepaTopUp(message.supply as KlepaTopUpSupply, message.amount)
+          }
           break
         case "openSettingsPanel":
           vscode.commands.executeCommand("kilo-code.new.settingsButtonClicked", message.tab)
@@ -3060,11 +3067,7 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
 
     const dir = this.getWorkspaceDirectory()
     try {
-      if (!this.storedProviderKeys[GPT_CHAT_BY_PROVIDER_ID]) {
-        const { storedKeys } = await fetchProviderData(client, dir)
-        this.storedProviderKeys = storedKeys
-      }
-      const token = await resolveKlepaToken(client, this.storedProviderKeys, dir)
+      const token = await this.resolveKlepaToken(dir)
       const balance = await fetchKlepaBalance(token)
       this.postMessage({ type: "balanceData", balance })
     } catch (error) {
@@ -3074,6 +3077,35 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
         error: getErrorMessage(error) || "Failed to fetch balance",
       })
     }
+  }
+
+  private async handleKlepaTopUp(supply: KlepaTopUpSupply, amount?: number) {
+    const client = this.client
+    if (!client) return
+
+    const dir = this.getWorkspaceDirectory()
+    try {
+      const token = await this.resolveKlepaToken(dir)
+      if (!token) throw new Error("Not authenticated")
+      const url = await fetchKlepaTopUp(token, supply, amount)
+      void vscode.env.openExternal(vscode.Uri.parse(url))
+    } catch (error) {
+      this.postMessage({
+        type: "error",
+        message: getErrorMessage(error) || "Failed to start top-up",
+      })
+    }
+  }
+
+  private async resolveKlepaToken(dir: string) {
+    const client = this.client
+    if (!client) return null
+
+    if (!this.storedProviderKeys[GPT_CHAT_BY_PROVIDER_ID]) {
+      const { storedKeys } = await fetchProviderData(client, dir)
+      this.storedProviderKeys = storedKeys
+    }
+    return resolveKlepaToken(client, this.storedProviderKeys, dir)
   }
 
   private async handleGptChatByTelegramLogin(): Promise<void> {

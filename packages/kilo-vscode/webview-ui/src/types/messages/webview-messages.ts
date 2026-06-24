@@ -137,6 +137,14 @@ export interface RefreshBalanceRequest {
   type: "refreshBalance"
 }
 
+export type KlepaTopUpSupply = "API_BALANCE" | "COPI_CODE_SUBSCRIBE" | "COPI_CODE_SUBSCRIBE_YEAR"
+
+export interface KlepaTopUpRequest {
+  type: "klepaTopUp"
+  supply: KlepaTopUpSupply
+  amount?: number
+}
+
 export interface OpenExternalRequest {
   type: "openExternal"
   url: string
@@ -1131,6 +1139,7 @@ export type WebviewMessage =
   | LogoutRequest
   | RefreshProfileRequest
   | RefreshBalanceRequest
+  | KlepaTopUpRequest
   | OpenExternalRequest
   | OpenSettingsPanelRequest
   | OpenVSCodeSettingsRequest
