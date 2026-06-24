@@ -1,7 +1,7 @@
 export const KILO_PROVIDER_ID = "kilo"
-export { GPT_CHAT_BY_PROVIDER_ID } from "./gpt-chat-by"
-import { GPT_CHAT_BY_PROVIDER_ID } from "./gpt-chat-by"
-export const KILO_AUTO = { providerID: GPT_CHAT_BY_PROVIDER_ID, modelID: "auto" } as const
+export { GPT_CHAT_BY_PROVIDER_ID, KLEPA_DEFAULT_MODEL_ID } from "./gpt-chat-by"
+import { GPT_CHAT_BY_PROVIDER_ID, KLEPA_DEFAULT_MODEL_ID } from "./gpt-chat-by"
+export const KILO_AUTO = { providerID: GPT_CHAT_BY_PROVIDER_ID, modelID: KLEPA_DEFAULT_MODEL_ID } as const
 export const CUSTOM_PROVIDER_PACKAGES = ["@ai-sdk/openai-compatible", "@ai-sdk/openai", "@ai-sdk/anthropic"] as const
 export type CustomProviderPackage = (typeof CUSTOM_PROVIDER_PACKAGES)[number]
 export const CUSTOM_PROVIDER_PACKAGE: CustomProviderPackage = "@ai-sdk/openai-compatible"

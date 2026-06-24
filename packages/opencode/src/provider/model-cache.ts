@@ -9,6 +9,11 @@ import {
   GPT_CHAT_BY_ENV_KEY,
   GPT_CHAT_BY_PROVIDER_ID,
 } from "@/kilocode/provider/gpt-chat-by"
+import {
+  KLEPA_MODELS_PATH,
+  KlepaModelsResponse,
+  klepaModelsFromResponse,
+} from "@/kilocode/provider/klepa-models"
 import type { Provider } from "@opencode-ai/core/models-dev"
 import * as Log from "@opencode-ai/core/util/log"
 
@@ -92,6 +97,25 @@ export const layer: Layer.Layer<
       cost: { input: 0, output: 0 },
       limit: { context: 128000, output: 4096 },
       modalities: { input: ["text", "image"], output: ["text"] },
+    })
+
+    const fetchKlepaModels = Effect.fn("ModelCache.fetchKlepaModels")(function* (options: Options) {
+      const baseURL = options.baseURL ?? GPT_CHAT_BY_API_BASE
+      const url = `${baseURL.replace(/\/+$/, "")}/${KLEPA_MODELS_PATH}`
+      const request = HttpClientRequest.get(url).pipe(HttpClientRequest.acceptJson)
+      const response = yield* (options.apiKey
+        ? request.pipe(HttpClientRequest.bearerToken(options.apiKey))
+        : request
+      ).pipe(http.execute, Effect.timeout("10 seconds"))
+      if (response.status < 200 || response.status >= 300) {
+        log.error("klepa model fetch failed", { status: response.status, url })
+        return {}
+      }
+
+      const json = yield* HttpClientResponse.schemaBodyJson(KlepaModelsResponse)(response)
+      const models = klepaModelsFromResponse(json)
+      log.info("klepa models loaded", { count: Object.keys(models).length })
+      return models
     })
 
     const fetchApertisModels = Effect.fn("ModelCache.fetchApertisModels")(function* (options: Options) {
@@ -181,7 +205,10 @@ export const layer: Layer.Layer<
 
     const fetchModels = (providerID: string, options: Options): Effect.Effect<Result, unknown> => {
       if (providerID === "kilo") return kilo.fetch(options)
-      if (providerID === "apertis" || providerID === GPT_CHAT_BY_PROVIDER_ID) {
+      if (providerID === GPT_CHAT_BY_PROVIDER_ID) {
+        return fetchKlepaModels(options).pipe(Effect.map((models) => ({ models })))
+      }
+      if (providerID === "apertis") {
         return fetchApertisModels(options).pipe(Effect.map((models) => ({ models })))
       }
       log.debug("provider not implemented", { providerID })

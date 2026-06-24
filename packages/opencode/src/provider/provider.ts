@@ -1859,12 +1859,8 @@ export const layer = Layer.effect(
       if (!provider) return undefined
 
       let priority = [
-        "claude-haiku-4-5",
-        "claude-haiku-4.5",
-        "3-5-haiku",
-        "3.5-haiku",
-        "gemini-3-flash",
-        "gemini-2.5-flash",
+        "gemma-4",
+        "deepseek-v4-flash",
         "gpt-5-nano",
       ]
       if (providerID.startsWith("opencode")) {

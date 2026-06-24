@@ -170,6 +170,58 @@ it.live("exposes the most recently refreshed provider value", () =>
   }),
 )
 
+it.live("fetches Klepa models from ai-models/klepa", () =>
+  Effect.gen(function* () {
+    const hits = yield* Ref.make<Hit[]>([])
+    const http = HttpClient.make((request) =>
+      Effect.gen(function* () {
+        yield* Ref.update(hits, (list) => [...list, { url: request.url }])
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json([
+            {
+              name: "klepa/auto",
+              maxTokens: 64000,
+              contextWindow: 200000,
+              supportsImages: true,
+              supportsPromptCache: true,
+              supportsNativeTools: true,
+              supportsReasoningEffort: false,
+              inputPrice: 1,
+              outputPrice: 3,
+              displayName: "klepa/auto",
+              description: "openrouter/auto",
+              isFree: false,
+              recommended: true,
+              architecture: { inputModalities: ["text", "image"], outputModalities: ["text"] },
+              supportedParameters: ["tools", "temperature"],
+            },
+            {
+              name: "google/gemini-3.1-pro",
+              contextWindow: 1000000,
+              supportsReasoningEffort: true,
+              architecture: { inputModalities: ["text", "image"], outputModalities: ["text"] },
+              supportedParameters: ["tools", "reasoning", "temperature"],
+            },
+          ]),
+        )
+      }),
+    )
+    const run = Layer.fresh(ModelCache.layer).pipe(
+      Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
+      Layer.provide(TestConfig.layer()),
+      Layer.provide(auth),
+      Layer.provide(ModelCache.kiloModelsLayer),
+    )
+    const models = yield* ModelCache.Service.use((cache) =>
+      cache.fetch("klepa", { apiKey: "test-key", baseURL: "https://api.gpt-chat.by/api/" }),
+    ).pipe(Effect.provide(run))
+
+    expect(Object.keys(models)).toEqual(["klepa/auto", "google/gemini-3.1-pro"])
+    expect((yield* Ref.get(hits)).map((hit) => hit.url)).toEqual(["https://api.gpt-chat.by/api/ai-models/klepa"])
+  }),
+)
+
 it.live("does not resolve auth or config for unsupported providers", () =>
   Effect.gen(function* () {
     const hits = yield* Ref.make<Hit[]>([])

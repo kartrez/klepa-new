@@ -1,5 +1,12 @@
 export const GPT_CHAT_BY_PROVIDER_ID = "klepa"
 
+export const KLEPA_DEFAULT_MODEL_ID = "klepa/auto"
+
+export function normalizeKlepaModelId(modelID: string) {
+  if (modelID === "auto" || modelID === "free") return `klepa/${modelID}`
+  return modelID
+}
+
 export const EXTENSION_ID = "copy-code.copy-coder"
 
 export const EXTENSION_LOGIN_PATH = "/loginhook"

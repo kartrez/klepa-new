@@ -1,4 +1,5 @@
 import type { Provider, ProviderModel, ModelSelection } from "../types/messages"
+import { GPT_CHAT_BY_PROVIDER_ID, normalizeKlepaModelId } from "../../../src/shared/gpt-chat-by"
 
 export type EnrichedModel = ProviderModel & { providerID: string; providerName: string }
 
@@ -26,7 +27,9 @@ export function flattenModels(providers: Record<string, Provider>): EnrichedMode
  */
 export function findModel(models: EnrichedModel[], selection: ModelSelection | null): EnrichedModel | undefined {
   if (!selection) return undefined
-  return models.find((m) => m.providerID === selection.providerID && m.id === selection.modelID)
+  const modelID =
+    selection.providerID === GPT_CHAT_BY_PROVIDER_ID ? normalizeKlepaModelId(selection.modelID) : selection.modelID
+  return models.find((m) => m.providerID === selection.providerID && m.id === modelID)
 }
 
 /**
@@ -41,6 +44,14 @@ export function isModelValid(
   if (!selection) return false
   const provider = providers[selection.providerID]
   if (!provider) return false
-  if (selection.providerID !== "kilo" && !connected.includes(selection.providerID)) return false
-  return !!provider.models[selection.modelID]
+  const modelID =
+    selection.providerID === GPT_CHAT_BY_PROVIDER_ID ? normalizeKlepaModelId(selection.modelID) : selection.modelID
+  if (
+    selection.providerID !== "kilo" &&
+    selection.providerID !== GPT_CHAT_BY_PROVIDER_ID &&
+    !connected.includes(selection.providerID)
+  ) {
+    return false
+  }
+  return !!provider.models[modelID]
 }

@@ -35,7 +35,7 @@ export const layer: Layer.Layer<Service, never, Core.Service | Config.Service | 
         const api = opts?.baseURL ?? GPT_CHAT_BY_API_BASE
         const fetch = opts?.baseURL ? { baseURL: opts.baseURL } : {}
         const models = yield* cache
-          .fetch(GPT_CHAT_BY_PROVIDER_ID, fetch)
+          .refresh(GPT_CHAT_BY_PROVIDER_ID, fetch)
           .pipe(Effect.catch(() => Effect.succeed({})))
 
         const providers: Record<string, Core.Provider> = {
@@ -47,10 +47,6 @@ export const layer: Layer.Layer<Service, never, Core.Service | Config.Service | 
             npm: "@ai-sdk/openai-compatible",
             models,
           },
-        }
-
-        if (Object.keys(models).length === 0) {
-          yield* cache.refresh(GPT_CHAT_BY_PROVIDER_ID, fetch).pipe(Effect.ignore, Effect.forkDetach)
         }
 
         return providers

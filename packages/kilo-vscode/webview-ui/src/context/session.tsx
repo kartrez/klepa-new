@@ -70,6 +70,7 @@ import { PartStash } from "./part-stash"
 import { mergeParts, sameParts } from "./session-parts"
 import { state as todoState } from "./todo-revert"
 import { getVariant, sessionVariantKeys, transferVariants, variantKey } from "./session-variant-store"
+import { pruneInvalidModelSelections } from "./session-model-store"
 import { KILO_AUTO, KILO_PROVIDER_ID, parseModelString } from "../../../src/shared/provider-model"
 import { reviewMetadata, type ReviewMessageData } from "../../../src/shared/review-comments"
 import { visibleMessages as filterVisibleMessages } from "./session-queue"
@@ -612,6 +613,32 @@ export const SessionProvider: ParentComponent = (props) => {
   const unsubKiloModel = vscode.onMessage((message: ExtensionMessage) => {
     if (message.type === "providersLoaded") {
       setCatalog((value) => value + 1)
+      const pruned = pruneInvalidModelSelections(
+        {
+          modelSelections: store.modelSelections,
+          sessionOverrides: store.sessionOverrides,
+          agentSelections: store.agentSelections,
+          recentModels: store.recentModels,
+        },
+        message.providers,
+        message.connected,
+        KILO_AUTO,
+      )
+      if (pruned.resetAgents.length > 0) {
+        batch(() => {
+          setStore("modelSelections", pruned.modelSelections)
+          setStore("sessionOverrides", pruned.sessionOverrides)
+          for (const agent of pruned.resetAgents) {
+            setUserSetAgents((prev) => ({ ...prev, [agent]: true }))
+            vscode.postMessage({
+              type: "persistModelSelection",
+              agent,
+              providerID: KILO_AUTO.providerID,
+              modelID: KILO_AUTO.modelID,
+            })
+          }
+        })
+      }
       return
     }
     if (message.type === "selectKiloModel") selectKiloModel(message.modelID, message.agent)

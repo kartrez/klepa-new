@@ -5,6 +5,7 @@ import {
   applyModel,
   getSessionModel,
   getSelected,
+  pruneInvalidModelSelections,
 } from "../../webview-ui/src/context/session-model-store"
 import type { ModelSelection, Provider } from "../../webview-ui/src/types/messages"
 
@@ -287,5 +288,42 @@ describe("per-mode model memory", () => {
     }
 
     expect(getSelected(switched, configured, "session-a", "code")).toEqual(gpt)
+  })
+})
+
+describe("pruneInvalidModelSelections", () => {
+  const klepaAuto: ModelSelection = { providerID: "klepa", modelID: "klepa/auto" }
+  const klepaProviders: Record<string, Provider> = {
+    klepa: makeProvider("klepa", ["klepa/auto", "klepa/free", "google/gemini-3.1-pro"]),
+  }
+
+  it("resets missing models to klepa/auto", () => {
+    const store: ModelStore = {
+      ...emptyStore(),
+      modelSelections: { code: { providerID: "klepa", modelID: "removed-model" } },
+    }
+    const pruned = pruneInvalidModelSelections(store, klepaProviders, ["klepa"], klepaAuto)
+    expect(pruned.resetAgents).toEqual(["code"])
+    expect(pruned.modelSelections.code).toEqual(klepaAuto)
+  })
+
+  it("keeps valid persisted selections", () => {
+    const store: ModelStore = {
+      ...emptyStore(),
+      modelSelections: { code: { providerID: "klepa", modelID: "google/gemini-3.1-pro" } },
+    }
+    const pruned = pruneInvalidModelSelections(store, klepaProviders, ["klepa"], klepaAuto)
+    expect(pruned.resetAgents).toEqual([])
+    expect(pruned.modelSelections.code).toEqual(store.modelSelections.code)
+  })
+
+  it("migrates legacy auto id to klepa/auto", () => {
+    const store: ModelStore = {
+      ...emptyStore(),
+      modelSelections: { code: { providerID: "klepa", modelID: "auto" } },
+    }
+    const pruned = pruneInvalidModelSelections(store, klepaProviders, ["klepa"], klepaAuto)
+    expect(pruned.resetAgents).toEqual([])
+    expect(pruned.modelSelections.code).toEqual(klepaAuto)
   })
 })

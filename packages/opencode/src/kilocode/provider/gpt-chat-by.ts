@@ -1,3 +1,5 @@
+export const KLEPA_DEFAULT_MODEL_ID = "klepa/auto"
+
 export const GPT_CHAT_BY_PROVIDER_ID = "klepa"
 
 export const GPT_CHAT_BY_API_BASE = "https://api.gpt-chat.by/api/"

@@ -1,5 +1,6 @@
 import type { ModelSelection, Provider } from "../types/messages"
 import { resolveModelSelection } from "./model-selection"
+import { GPT_CHAT_BY_PROVIDER_ID, normalizeKlepaModelId } from "../../../src/shared/gpt-chat-by"
 
 /**
  * Pure-logic helpers for per-session and global model selection.
@@ -106,4 +107,66 @@ export function applyModel(
   }
 
   return { modelSelections, sessionOverrides }
+}
+
+export function pruneInvalidModelSelections(
+  store: ModelStore,
+  providers: Record<string, Provider>,
+  connected: string[],
+  fallback: ModelSelection,
+): {
+  modelSelections: Record<string, ModelSelection | null>
+  sessionOverrides: Record<string, ModelSelection>
+  resetAgents: string[]
+} {
+  const modelKey = (selection: ModelSelection) =>
+    selection.providerID === GPT_CHAT_BY_PROVIDER_ID
+      ? normalizeKlepaModelId(selection.modelID)
+      : selection.modelID
+
+  const valid = (selection: ModelSelection | null) => {
+    if (!selection) return true
+    const provider = providers[selection.providerID]
+    if (!provider) return false
+    if (
+      selection.providerID !== "kilo" &&
+      selection.providerID !== GPT_CHAT_BY_PROVIDER_ID &&
+      !connected.includes(selection.providerID)
+    ) {
+      return false
+    }
+    return !!provider.models[modelKey(selection)]
+  }
+
+  const modelSelections = { ...store.modelSelections }
+  const sessionOverrides = { ...store.sessionOverrides }
+  const resetAgents: string[] = []
+
+  for (const [agent, selection] of Object.entries(modelSelections)) {
+    if (!selection) continue
+    const modelID = modelKey(selection)
+    if (modelID !== selection.modelID) {
+      modelSelections[agent] = { ...selection, modelID }
+    }
+  }
+
+  for (const [sessionID, selection] of Object.entries(sessionOverrides)) {
+    const modelID = modelKey(selection)
+    if (modelID !== selection.modelID) {
+      sessionOverrides[sessionID] = { ...selection, modelID }
+    }
+  }
+
+  for (const [agent, selection] of Object.entries(modelSelections)) {
+    if (!selection || valid(selection)) continue
+    modelSelections[agent] = fallback
+    resetAgents.push(agent)
+  }
+
+  for (const [sessionID, selection] of Object.entries(sessionOverrides)) {
+    if (valid(selection)) continue
+    delete sessionOverrides[sessionID]
+  }
+
+  return { modelSelections, sessionOverrides, resetAgents }
 }
