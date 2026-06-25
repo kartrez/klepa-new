@@ -1,6 +1,6 @@
 {
   "name": "copy-coder",
-  "displayName": "Klepa AI: AI Coding Agent, Copilot, and Autocomplete",
+  "displayName": "Klepa AI — Coding Assistant for VS Code",
   "description": "AI coding assistant Klepa AI — generate code from natural language, automate tasks, and run terminal commands in VS Code.",
   "version": "7.3.54",
   "icon": "assets/icons/logo-outline-black.png",
