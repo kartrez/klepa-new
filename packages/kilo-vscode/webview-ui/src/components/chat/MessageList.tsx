@@ -19,8 +19,6 @@ import { useLanguage } from "../../context/language"
 import { WelcomeEmptyState } from "./WelcomeEmptyState"
 import { TranscriptRowView } from "./TranscriptRow"
 import { RevertBanner } from "./RevertBanner"
-import { AccountSwitcher } from "../shared/AccountSwitcher"
-import { KiloNotifications } from "./KiloNotifications"
 import { WorkingIndicator } from "../shared/WorkingIndicator"
 import { TurnOutcome } from "../shared/TurnOutcome"
 import { QuestionDock } from "./QuestionDock"
@@ -279,12 +277,6 @@ export const MessageList: Component<MessageListProps> = (props) => {
       <Show when={props.announce === false}>
         <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">
           {announcement()}
-        </div>
-      </Show>
-      <Show when={isEmpty()}>
-        <div class="welcome-header">
-          <AccountSwitcher class="account-switcher-welcome" />
-          <KiloNotifications />
         </div>
       </Show>
       <div

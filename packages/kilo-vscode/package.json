@@ -1,8 +1,8 @@
 {
   "name": "copy-coder",
   "displayName": "Klepa AI — Coding Assistant for VS Code",
-  "description": "AI coding assistant Klepa AI — generate code from natural language, automate tasks, and run terminal commands in VS Code.",
-  "version": "7.3.54",
+  "description": "Агент искусственного интеллекта с открытым исходным кодом, который генерирует код на естественном языке, автоматизирует задачи и выполняет команды терминала. Включает встроенное автозаполнение, автоматизацию браузера, автоматический рефакторинг и пользовательские режимы для планирования, кодирования и отладки. Поддерживает разные  LLM модели искусственного интеллекта, включая Claude, Gemini, Qwen и другие.",
+  "version": "0.4.10",
   "icon": "assets/icons/logo-outline-black.png",
   "galleryBanner": {
     "color": "#FFFFFF",

@@ -26,6 +26,12 @@ const NotificationsResponseSchema = z.object({
 
 const NOTIFICATIONS_TIMEOUT_MS = 5000
 
+const blockedTitles = new Set(["github star giveaway"])
+
+export function visibleNotifications(items: KilocodeNotification[]) {
+  return items.filter((item) => !blockedTitles.has(item.title.trim().toLowerCase()))
+}
+
 /**
  * Fetch notifications from Kilo API
  *
@@ -57,7 +63,7 @@ export async function fetchKilocodeNotifications(options: {
 
     if (!result.success) return []
 
-    return result.data.notifications
+    return visibleNotifications(result.data.notifications)
   } catch {
     return []
   }
