@@ -58,7 +58,7 @@ jobs:
 
       - name: Update package.json version
         working-directory: packages/kilo-vscode
-        run: npm version "${{ steps.get-version.outputs.version }}" --no-git-tag-version --allow-same-version
+        run: bun pm pkg set version=${{ steps.get-version.outputs.version }}
 
       - name: Build CLI
         run: ./packages/opencode/script/build.ts
