@@ -11,7 +11,7 @@
   "publisher": "copy-code",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kartrez/klepa-ai.git",
+    "url": "https://github.com/kartrez/klepa-new.git",
     "directory": "packages/kilo-vscode"
   },
   "engines": {

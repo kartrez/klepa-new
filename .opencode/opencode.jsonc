@@ -18,5 +18,8 @@
     "github-triage": false,
     "github-pr-search": false,
   },
+  "indexing": {
+    "enabled": false
+  },
   "disabled_providers": [],
 }

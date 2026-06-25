@@ -1,4 +1,4 @@
 # copy-coder
 
 ## Releases LOG
-https://github.com/kartrez/klepa-ai
+https://github.com/kartrez/klepa-new
