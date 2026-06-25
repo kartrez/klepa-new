@@ -61,7 +61,7 @@ jobs:
         run: bun pm pkg set version=${{ steps.get-version.outputs.version }}
 
       - name: Build CLI
-        run: ./packages/opencode/script/build.ts
+        run: bun packages/opencode/script/build.ts
         env:
           KILO_VERSION: ${{ steps.get-version.outputs.version }}
 
