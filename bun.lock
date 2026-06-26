@@ -318,7 +318,7 @@
     },
     "packages/kilo-vscode": {
       "name": "copy-coder",
-      "version": "7.3.54",
+      "version": "0.4.10",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.39.0",
         "@kilocode/kilo-gateway": "workspace:*",
