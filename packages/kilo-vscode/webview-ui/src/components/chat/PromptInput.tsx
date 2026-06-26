@@ -18,6 +18,7 @@ import { useConfig } from "../../context/config"
 import { useProvider } from "../../context/provider"
 import { ModelSelector } from "../shared/ModelSelector"
 import { ModeSwitcher } from "../shared/ModeSwitcher"
+import { SandboxButtonBase, SandboxTooltipContent } from "../shared/SandboxButton"
 import { SpeechToTextButton } from "../speech-to-text/SpeechToTextButton"
 import { canUseSpeechToText, selectedSpeechToTextModel } from "../speech-to-text/availability"
 import { ThinkingSelector } from "../shared/ThinkingSelector"
@@ -42,6 +43,7 @@ import {
   isPromptBusy,
   isPathMention,
   applySandboxState,
+  type SandboxDefaultState,
   type SandboxState,
 } from "./prompt-input-utils"
 import type { ExtensionMessage, ReviewComment, SendMessageFailedMessage, TextPart } from "../../types/messages"
@@ -99,9 +101,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   const mention = useFileMention(vscode, sid, hasGit)
   const terminal = useTerminalContext(vscode)
   const git = useGitChangesContext(vscode, ctx, hasGit)
-  const slash = useSlashCommand(vscode, () =>
-    session.variantList(sid()).length > 0 ? new Set() : new Set(["variant"]),
-  )
   const imageAttach = useImageAttachments()
   imageAttach.setFilePathDropHandler((paths) => {
     const cwd = server.workspaceDirectory()
@@ -149,6 +148,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   const [enhancing, setEnhancing] = createSignal(false)
   const [autoApprove, setAutoApprove] = createSignal(false)
   const [sandboxState, setSandboxState] = createSignal<SandboxState>()
+  const [sandboxDefault, setSandboxDefault] = createSignal<SandboxDefaultState>()
   const [sandboxRequest, setSandboxRequest] = createSignal<string>()
   const [sandboxTarget, setSandboxTarget] = createSignal<string | null>()
   let sandboxRetry: ReturnType<typeof setTimeout> | undefined
@@ -157,37 +157,60 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     const id = session.currentSessionID()
     return id?.startsWith("cloud:") ? undefined : id
   }
-  const sandboxVisible = () => {
-    const id = session.currentSessionID()
-    return features().sandboxControls && !id?.startsWith("cloud:")
-  }
+  const sandboxVisible = () => features().sandboxControls && !session.currentSessionID()?.startsWith("cloud:")
   const sandbox = () => {
     const state = sandboxState()
     return state?.sessionID === sandboxID() ? state : undefined
   }
-  const sandboxEnabled = () => sandbox()?.enabled ?? (!sandboxID() && config().experimental?.sandbox === true)
-  const sandboxReady = () => !sandboxID() || sandbox() !== undefined
+  const sandboxEnabled = () => (sandboxID() ? sandbox()?.enabled : sandboxDefault()?.enabled) ?? false
+  const sandboxAvailable = () => (sandboxID() ? sandbox()?.available : sandboxDefault()?.available) ?? false
+  const sandboxReason = () => (sandboxID() ? sandbox()?.reason : sandboxDefault()?.reason)
+  const sandboxReady = () => (sandboxID() ? sandbox() !== undefined : sandboxDefault() !== undefined)
+  const sandboxNetworkEnabled = () => config().experimental?.sandbox_restrict_network !== false
+  const sandboxDisabled = () =>
+    !server.isConnected() || !sandboxReady() || !sandboxAvailable() || sandboxRequest() !== undefined
   const requestSandbox = () => {
+    if (server.connectionState() !== "connected") return
     const sessionID = sandboxID()
-    if (!sessionID || server.connectionState() !== "connected") return
-    vscode.postMessage({ type: "requestSandboxStatus", sessionID })
+    if (sessionID) {
+      vscode.postMessage({ type: "requestSandboxStatus", sessionID })
+      return
+    }
+    vscode.postMessage({ type: "requestSandboxDefault", agentManagerContext: ctx() })
   }
   const toggleSandbox = () => {
     const sessionID = sandboxID()
-    const state = sandbox()
-    if ((sessionID && !state) || state?.available === false || sandboxRequest() || !server.isConnected()) return
+    if (!sandboxVisible() || sandboxDisabled()) return
     const requestID = crypto.randomUUID()
     if (!sessionID) saveDraft(draftKey(), text(), reviewComments(), imageAttach.images())
     setSandboxRequest(requestID)
     setSandboxTarget(sessionID ?? null)
+    if (!sessionID) {
+      vscode.postMessage({
+        type: "setSandboxDefault",
+        enabled: !sandboxDefault()!.desired,
+        requestID,
+        agentManagerContext: ctx(),
+      })
+      return
+    }
     vscode.postMessage({
       type: "toggleSandbox",
       sessionID,
-      draftID: props.pendingSessionID ?? session.draftSessionID(),
       requestID,
       agentManagerContext: ctx(),
     })
   }
+  const slash = useSlashCommand(
+    vscode,
+    { action: toggleSandbox, enabled: () => sandboxVisible() && !sandboxDisabled() },
+    () => {
+      const hidden = new Set<string>()
+      if (session.variantList(sid()).length === 0) hidden.add("variant")
+      if (!sandboxVisible()) hidden.add("sandbox")
+      return hidden
+    },
+  )
   const clearSandboxRequest = () => {
     setSandboxRequest(undefined)
     setSandboxTarget(undefined)
@@ -214,14 +237,16 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     if (!connected) {
       clearSandboxRequest()
       setSandboxState(undefined)
+      setSandboxDefault(undefined)
       return
     }
-    if (target && target !== sessionID) clearSandboxRequest()
+    if (target !== undefined && target !== sessionID) clearSandboxRequest()
     if (!sessionID) {
       setSandboxState(undefined)
+      if (sandboxRequest() && target === null) return
+      requestSandbox()
       return
     }
-    if (sandboxRequest() && target === null) return
     requestSandbox()
   })
 
@@ -450,6 +475,31 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   }
 
   const handleSandboxMessage = (message: ExtensionMessage) => {
+    if (message.type === "sandboxDefaultStatus") {
+      const matching = message.requestID !== undefined && message.requestID === sandboxRequest()
+      if (sandboxID() && !matching) return false
+      if (!server.isConnected()) return true
+      if (matching) clearSandboxRequest()
+      const current = sandboxDefault()
+      if (!current || current.revision <= message.revision) {
+        setSandboxDefault({
+          desired: message.desired,
+          enabled: message.enabled,
+          available: message.available,
+          reason: message.reason,
+          revision: message.revision,
+        })
+      }
+      if (matching && !message.available) {
+        showToast({
+          variant: "error",
+          title: language.t("common.requestFailed"),
+          description: message.reason,
+        })
+      }
+      return true
+    }
+
     if (message.type === "sandboxStatus") {
       const matching = message.requestID !== undefined && message.requestID === sandboxRequest()
       if (message.sessionID !== sandboxID() && !matching) return false
@@ -845,6 +895,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
     // Client-side slash command — runs locally without a backend round-trip
     if (matched?.action) {
+      if (matched.enabled && !matched.enabled()) return
       setText("")
       clearReviewComments()
       imageAttach.clear()
@@ -1175,37 +1226,15 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
             </Button>
           </Tooltip>
           <Show when={sandboxVisible()}>
-            <Tooltip
-              value={
-                sandbox()?.available === false
-                  ? (sandbox()?.reason ?? language.t("common.requestFailed"))
-                  : sandboxEnabled()
-                    ? language.t("prompt.action.sandbox.enabled")
-                    : language.t("prompt.action.sandbox.disabled")
-              }
-              placement="top"
-            >
-              <Button
-                variant="ghost"
-                size="small"
-                onClick={toggleSandbox}
-                disabled={
-                  !server.isConnected() ||
-                  !sandboxReady() ||
-                  sandbox()?.available === false ||
-                  sandboxRequest() !== undefined
-                }
-                aria-label={
-                  sandboxEnabled()
-                    ? language.t("prompt.action.sandbox.disable")
-                    : language.t("prompt.action.sandbox.enable")
-                }
-                aria-pressed={sandboxEnabled()}
-                class={`prompt-status-button ${sandboxEnabled() ? "prompt-status-button--active" : ""}`}
-              >
-                <Icon name="lock" size="small" />
-              </Button>
-            </Tooltip>
+            <SandboxButtonBase
+              enabled={sandboxEnabled()}
+              available={sandboxReady() ? sandboxAvailable() : undefined}
+              reason={sandboxReason()}
+              disabled={sandboxDisabled()}
+              tooltip={<SandboxTooltipContent enabled={sandboxEnabled()} network={sandboxNetworkEnabled()} />}
+              tooltipClass="prompt-sandbox-tooltip-content"
+              onToggle={toggleSandbox}
+            />
           </Show>
           <Tooltip value={language.t("prompt.action.enhance")} placement="top">
             <Button
