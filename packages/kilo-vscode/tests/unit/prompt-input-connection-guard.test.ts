@@ -12,12 +12,14 @@ const icons = readFileSync(iconPath, "utf8")
 describe("PromptInput connection guard", () => {
   it("rechecks the connection after resolving async attachments and before clearing the draft", () => {
     const attachments = src.indexOf("const gitFile = await git.resolveAttachment")
-    const guard = src.indexOf("if (isDisabled()) return", attachments)
+    const guard = src.indexOf("if (isDisabled()) {", attachments)
+    const finish = src.indexOf("finishPending(pendingId)", guard)
     const send = src.indexOf("session.sendMessage(message", guard)
     const clear = src.indexOf("drafts.delete(key)", send)
 
     expect(attachments).toBeGreaterThan(-1)
     expect(guard).toBeGreaterThan(attachments)
+    expect(finish).toBeGreaterThan(guard)
     expect(send).toBeGreaterThan(guard)
     expect(clear).toBeGreaterThan(send)
   })
@@ -41,7 +43,8 @@ describe("PromptInput sandbox toggle", () => {
     expect(toggle).toContain("sessionID,")
     expect(toggle).toContain("requestID,")
     expect(toggle).not.toContain("draftID:")
-    expect(toggle).toContain("setSandboxTarget(sessionID ?? null)")
+    expect(toggle).toContain('setSandboxRequests((current) => ({ ...current, [sessionID ?? ""]: requestID }))')
+    expect(toggle).not.toContain("setSandboxTarget")
     expect(toggle).not.toContain('type: "updateConfig"')
   })
 
@@ -58,23 +61,44 @@ describe("PromptInput sandbox toggle", () => {
     expect(end).toBeGreaterThan(start)
     expect(save).toBeGreaterThan(-1)
     expect(move).toBeGreaterThan(save)
+    expect(created).toContain("{ text: drafts, comments: reviewDrafts, images: imageDrafts, scrolls: scrollDrafts }")
   })
 
-  it("keeps persisted sandbox state visible independently of the configured default", () => {
+  it("restores each prompt draft's textarea and highlight scroll positions", () => {
+    expect(src).toContain("scrollDrafts")
+    expect(src).toContain("const scroll = scrollDrafts.get(key) ?? 0")
+    expect(src).toContain("textareaRef.scrollTop = scroll")
+    expect(src).toContain("if (highlightRef) highlightRef.scrollTop = scroll")
+    expect(src).toContain("scrollDrafts.set(draftKey(), textareaRef.scrollTop)")
+    expect(src).toContain("images: imageAttach.images(),\n    scroll: textareaRef?.scrollTop")
+    expect(src).toContain("draft.text, draft.comments, draft.images, draft.scroll")
+  })
+
+  it("tracks in-flight toggles per session while switching", () => {
+    expect(src).toContain("const [sandboxRequests, setSandboxRequests] = createSignal<Record<string, string>>({})")
+    expect(src).toContain('const sandboxRequest = (sessionID?: string) => sandboxRequests()[sessionID ?? ""]')
+    expect(src).toContain("sandboxRequest(sandboxID()) !== undefined")
+    expect(src).toContain("if (current[key] !== requestID) return current")
+    expect(src).toContain("clearSandboxRequest(message.sessionID, message.requestID!)")
+    expect(src).not.toContain("setSandboxTarget")
+  })
+
+  it("shows sandbox controls only when the global sandbox setting is enabled", () => {
     expect(src).toContain(
-      'const sandboxVisible = () => features().sandboxControls && !session.currentSessionID()?.startsWith("cloud:")',
+      'globalConfig().sandbox?.enabled === true &&\n    !session.currentSessionID()?.startsWith("cloud:")',
     )
-    expect(src).not.toContain("config().experimental?.sandbox === true")
+    expect(src).toContain("features().sandboxControls &&")
     expect(src).toContain("<Show when={sandboxVisible()}>")
     expect(src).toContain("{ action: toggleSandbox, enabled: () => sandboxVisible() && !sandboxDisabled() }")
     expect(src).toContain('if (!sandboxVisible()) hidden.add("sandbox")')
     expect(src).toContain("onToggle={toggleSandbox}")
     expect(src).toContain('message.type === "sandboxStatus"')
-    expect(src).toContain("message.sessionID !== sandboxID() && !matching")
-    expect(src).toContain("setSandboxState(state)")
-    expect(src).toContain("message.requestID === sandboxRequest()")
-    expect(src).toContain("const target = untrack(sandboxTarget)")
-    expect(src).toContain("if (target !== undefined && target !== sessionID) clearSandboxRequest()")
+    expect(src).not.toContain("message.sessionID !== sandboxID() && !matching")
+    expect(src).toContain("const next = applySandboxStates(current, message)")
+    expect(src).toContain("if (next !== current) setSandboxes(next)")
+    expect(src).toContain("message.requestID === sandboxRequest(message.sessionID)")
+    expect(src).toContain("if (message.sessionID === sandboxID())")
+    expect(src).toContain("if (message.sessionID === sandboxID()) retrySandbox(message.sessionID)")
     expect(src).toContain("sandboxID() ? sandbox()?.enabled : sandboxDefault()?.enabled")
     expect(src).toContain('type: "requestSandboxDefault", agentManagerContext: ctx()')
     expect(src).toContain("<SandboxButtonBase")
@@ -83,7 +107,7 @@ describe("PromptInput sandbox toggle", () => {
     expect(src).toContain("!sandboxReady()")
     expect(button).toContain("aria-pressed={props.enabled}")
     expect(button).toContain('class={`prompt-status-button ${props.enabled ? "prompt-status-button--active" : ""}`}')
-    expect(src).toContain("if (sandboxRequest() && target === null) return")
+    expect(src).toContain("if (sandboxRequest(undefined)) return")
     expect(src).not.toContain("if (state === current) return true")
   })
 
@@ -99,9 +123,7 @@ describe("PromptInput sandbox toggle", () => {
   })
 
   it("explains filesystem and network state without changing the lock icon", () => {
-    expect(src).toContain(
-      "const sandboxNetworkEnabled = () => config().experimental?.sandbox_restrict_network !== false",
-    )
+    expect(src).toContain('const sandboxNetworkEnabled = () => config().sandbox?.network !== "allow"')
     expect(src).toContain("<SandboxTooltipContent enabled={sandboxEnabled()} network={sandboxNetworkEnabled()} />")
     expect(src).toContain('tooltipClass="prompt-sandbox-tooltip-content"')
     expect(button).toContain('<Icon name="lock" size="small" />')

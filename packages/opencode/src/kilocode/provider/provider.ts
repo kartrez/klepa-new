@@ -9,7 +9,8 @@
 import { createKilo, type KiloProvider, AI_SDK_PROVIDERS, PROMPTS } from "@kilocode/kilo-gateway"
 import { GPT_CHAT_BY_PROVIDER_ID, klepaTrafficHeaders } from "./gpt-chat-by"
 import { DEFAULT_HEADERS } from "@/kilocode/const"
-import { ProviderID, ModelID } from "@/provider/schema"
+import { ProviderV2 } from "@opencode-ai/core/provider"
+import { ModelV2 } from "@opencode-ai/core/model"
 import { optionalOmitUndefined } from "@opencode-ai/core/schema"
 import { Effect, Schema } from "effect"
 import type { LanguageModelV3 } from "@ai-sdk/provider"
@@ -44,6 +45,11 @@ export const KILO_MODEL_SCHEMA_EXTENSIONS = {
       avgAttemptCostUsd: Schema.Finite,
     }),
   ),
+  autoRouting: optionalOmitUndefined(
+    Schema.Struct({
+      models: Schema.Array(Schema.String),
+    }),
+  ),
   ai_sdk_provider: Schema.optional(Schema.Literals(AI_SDK_PROVIDERS)),
 }
 
@@ -60,6 +66,7 @@ export function patchModelsDevModel(providerID: string, source: any) {
     mayTrainOnYourPrompts: source.mayTrainOnYourPrompts,
     hasUserByokAvailable: source.hasUserByokAvailable,
     terminalBench: source.terminalBench,
+    autoRouting: source.autoRouting,
     ai_sdk_provider: source.ai_sdk_provider,
     options: source.options ?? {},
   }
@@ -77,6 +84,7 @@ export function patchConfigModel(cfg: any, existing: any) {
     mayTrainOnYourPrompts: cfg.mayTrainOnYourPrompts ?? existing?.mayTrainOnYourPrompts,
     hasUserByokAvailable: cfg.hasUserByokAvailable ?? existing?.hasUserByokAvailable,
     terminalBench: existing?.terminalBench,
+    autoRouting: existing?.autoRouting,
     ai_sdk_provider: cfg.ai_sdk_provider ?? existing?.ai_sdk_provider,
     variants: cfg.variants
       ? mapValues(

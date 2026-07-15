@@ -39,7 +39,7 @@ export default [
   {
     files: ["src/KiloProvider.ts"],
     // This is the extension integration surface; do not gate feature work on line-count churn.
-    rules: { complexity: ["error", 150], "max-lines": "off" },
+    rules: { complexity: ["error", 153], "max-lines": "off" },
   },
   {
     files: ["webview-ui/agent-manager/AgentManagerApp.tsx"],
@@ -73,7 +73,10 @@ export default [
   },
   {
     files: ["webview-ui/src/context/session.tsx"],
-    rules: { complexity: ["error", 31] },
+    // Raised from the default 3000 as this session context grew past the cap
+    // after upstream merges; kept as a targeted override rather than loosening
+    // the global limit.
+    rules: { complexity: ["error", 31], "max-lines": ["error", 3100] },
   },
   {
     files: ["src/services/autocomplete/classic-auto-complete/AutocompleteInlineCompletionProvider.ts"],

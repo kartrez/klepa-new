@@ -373,6 +373,7 @@ interface CloseSessionIn {
 interface PersistSessionIn {
   type: "agentManager.persistSession"
   sessionId: string
+  draftID?: string
 }
 
 /** Remove a non-worktree session from agent-manager.json. */
@@ -564,6 +565,11 @@ interface OpenSessionsIn {
   sessionIDs: string[]
 }
 
+interface VisibleSessionIn {
+  type: "agentManager.visibleSession"
+  sessionID: string | null
+}
+
 interface OpenFileIn {
   type: "agentManager.openFile"
   sessionId: string
@@ -641,8 +647,16 @@ interface SendCommandIn {
   contextDirectory?: string
 }
 
+interface QuestionReplyIn {
+  type: "questionReply"
+  requestID: string
+  sessionID?: string
+  answers: string[][]
+}
+
 interface RequestSandboxDefaultIn {
   type: "requestSandboxDefault"
+  requestID?: string
   agentManagerContext?: string
   contextDirectory?: string
 }
@@ -801,6 +815,7 @@ export type AgentManagerInMessage =
   | RefreshPRIn
   | OpenPRIn
   | OpenSessionsIn
+  | VisibleSessionIn
   | OpenFileIn
   | GenericOpenFileIn
   | PreviewImageIn
@@ -808,6 +823,7 @@ export type AgentManagerInMessage =
   | LoadMessagesIn
   | SendMessageIn
   | SendCommandIn
+  | QuestionReplyIn
   | RequestSandboxDefaultIn
   | SetSandboxDefaultIn
   | ToggleSandboxIn
