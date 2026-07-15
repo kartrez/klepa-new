@@ -39,6 +39,7 @@ export {
   fetchKiloModels,
   type KiloModelsResult,
   fetchKiloImageModels,
+  fetchKlepaImageModels,
   type KiloImageModel,
   type KiloImageModelsResult,
 } from "./api/models.js"

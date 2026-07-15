@@ -6,7 +6,7 @@
  */
 
 import { fetchKilocodeNotifications, KilocodeNotificationSchema } from "../api/notifications.js"
-import { fetchKiloImageModels } from "../api/models.js"
+import { fetchKlepaImageModels } from "../api/models.js"
 import { fetchOrganizationModes, clearModesCache } from "../api/modes.js"
 import { KILO_API_BASE, HEADER_FEATURE, HEADER_ORGANIZATIONID } from "../api/constants.js"
 import { buildKiloHeaders } from "../headers.js"
@@ -450,7 +450,7 @@ export function createKiloRoutes(deps: KiloRoutesDeps) {
       "/models/images",
       describeRoute({
         summary: "Image generation models",
-        description: "List image-capable models from the Kilo Gateway OpenRouter passthrough",
+        description: "List image-capable models from gpt-chat.by",
         operationId: "kilo.models.images",
         responses: {
           200: {
@@ -468,21 +468,13 @@ export function createKiloRoutes(deps: KiloRoutesDeps) {
       }),
       async (c: any) => {
         try {
-          const proxy = await getProxyAuth()
-          if (!proxy.auth || !proxy.token) throw new UnauthorizedError()
-
-          const result = await fetchKiloImageModels({
-            kilocodeToken: proxy.token,
-            kilocodeOrganizationId: proxy.organizationId,
-          })
+          const result = await fetchKlepaImageModels()
           if (result.error) {
-            if (result.error.kind === "unauthorized") throw new UnauthorizedError()
             throw new Error(`Failed to fetch image models: ${result.error.kind}`)
           }
           return c.json(result.models)
         } catch (err) {
-          if (!(err instanceof UnauthorizedError)) throw err
-          return c.json({ error: "Not authenticated with Kilo Gateway" }, 401)
+          return c.json({ error: `Failed to fetch image models: ${(err as Error).message}` }, 400)
         }
       },
     )

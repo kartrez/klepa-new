@@ -212,6 +212,50 @@ async function fetchRawKiloModels(options?: {
 }
 
 /**
+ * Klepa (gpt-chat.by) image model from the /api/ai-models/images endpoint.
+ */
+const klepaImageModelSchema = z.object({
+  name: z.string(),
+  displayName: z.string(),
+  description: z.string().optional(),
+  color: z.string().optional(),
+  price: z.number().optional(),
+  price_rub: z.number().optional(),
+  supportedImageSizes: z.array(z.string()).optional(),
+})
+
+const klepaImageModelsResponseSchema = z.array(klepaImageModelSchema)
+
+/**
+ * Fetch image generation models from gpt-chat.by public API.
+ * No auth required — the endpoint is public.
+ */
+export async function fetchKlepaImageModels(): Promise<KiloImageModelsResult> {
+  try {
+    const res = await fetch("https://api.gpt-chat.by/api/ai-models/images", {
+      signal: AbortSignal.timeout(MODELS_FETCH_TIMEOUT_MS),
+    })
+    if (!res.ok) return { models: [], error: { kind: "http", status: res.status } }
+
+    const json = await res.json().catch(() => null)
+    if (json === null) return { models: [], error: { kind: "schema" } }
+
+    const result = klepaImageModelsResponseSchema.safeParse(json)
+    if (!result.success) return { models: [], error: { kind: "schema" } }
+
+    return {
+      models: result.data.map((m) => ({
+        id: m.name,
+        name: m.displayName,
+        description: m.description,
+      })),
+    }
+  } catch {
+    return { models: [], error: { kind: "network" } }
+  }
+}
+
+/**
  * Transform OpenRouter model to ModelsDev.Model format
  */
 function transformToModelDevFormat(model: OpenRouterModel): any {

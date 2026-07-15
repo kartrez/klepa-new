@@ -2,24 +2,16 @@
 import { describe, expect, test } from "bun:test"
 import {
   parseImageResponse,
-  resolveProvider,
   ensureExtension,
+  buildMultipartBody,
   IMAGE_MODELS,
   DEFAULT_MODEL,
 } from "../../../src/kilocode/tool/generate-image"
 
 describe("generate-image response parser", () => {
-  test("extracts PNG from data URL in choices[0].message.images[0]", () => {
+  test("extracts PNG from data URL in image field", () => {
     const base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
-    const body = JSON.stringify({
-      choices: [
-        {
-          message: {
-            images: [{ image_url: { url: `data:image/png;base64,${base64}` } }],
-          },
-        },
-      ],
-    })
+    const body = JSON.stringify({ image: `data:image/png;base64,${base64}` })
     const result = parseImageResponse(body)
     expect(result).not.toBeNull()
     expect(result!.format).toBe("png")
@@ -28,21 +20,18 @@ describe("generate-image response parser", () => {
 
   test("extracts JPEG format", () => {
     const base64 = "/9j/4AAQSkZJRgABAQAAAQABAAD"
-    const body = JSON.stringify({
-      choices: [{ message: { images: [{ image_url: { url: `data:image/jpeg;base64,${base64}` } }] } }],
-    })
+    const body = JSON.stringify({ image: `data:image/jpeg;base64,${base64}` })
     const result = parseImageResponse(body)
     expect(result!.format).toBe("jpeg")
     expect(result!.base64).toBe(base64)
   })
 
-  test("returns null when choices array is empty", () => {
-    expect(parseImageResponse(JSON.stringify({ choices: [] }))).toBeNull()
+  test("returns null when image field is missing", () => {
+    expect(parseImageResponse(JSON.stringify({}))).toBeNull()
   })
 
-  test("returns null when images array is missing", () => {
-    const body = JSON.stringify({ choices: [{ message: {} }] })
-    expect(parseImageResponse(body)).toBeNull()
+  test("returns null when image is not a string", () => {
+    expect(parseImageResponse(JSON.stringify({ image: 123 }))).toBeNull()
   })
 
   test("returns null on malformed JSON", () => {
@@ -50,53 +39,14 @@ describe("generate-image response parser", () => {
   })
 
   test("returns null when data URL prefix is invalid", () => {
-    const body = JSON.stringify({
-      choices: [{ message: { images: [{ image_url: { url: "https://example.com/image.png" } }] } }],
-    })
-    expect(parseImageResponse(body)).toBeNull()
-  })
-})
-
-describe("generate-image provider resolver", () => {
-  test("uses Kilo cloud when Kilo auth is present", () => {
-    const result = resolveProvider({ type: "oauth", access: "kilo-token", accountId: "org-123" }, undefined)
-    expect(result).not.toBeNull()
-    expect(result!.token).toBe("kilo-token")
-    expect(result!.organizationId).toBe("org-123")
-    expect(result!.provider).toBe("kilo")
-    expect(result!.url).toContain("openrouter")
-  })
-
-  test("uses Kilo cloud with API key auth", () => {
-    const result = resolveProvider({ type: "api", key: "kilo-api-key" }, undefined)
-    expect(result!.token).toBe("kilo-api-key")
-    expect(result!.provider).toBe("kilo")
-  })
-
-  test("falls back to OpenRouter with BYO key when no Kilo auth", () => {
-    const result = resolveProvider(undefined, "or-key-123")
-    expect(result!.provider).toBe("openrouter")
-    expect(result!.token).toBe("or-key-123")
-    expect(result!.url).toContain("openrouter.ai")
-  })
-
-  test("returns null when no auth source is available", () => {
-    expect(resolveProvider(undefined, undefined)).toBeNull()
-  })
-
-  test("prefers Kilo auth over OpenRouter key", () => {
-    const result = resolveProvider({ type: "oauth", access: "kilo-token" }, "or-key")
-    expect(result!.provider).toBe("kilo")
-    expect(result!.token).toBe("kilo-token")
+    expect(parseImageResponse(JSON.stringify({ image: "https://example.com/image.png" }))).toBeNull()
   })
 })
 
 describe("generate-image response parser MIME normalization", () => {
   test("normalizes jpg data URL to jpeg format", () => {
     const base64 = "/9j/4AAQSkZJRgABAQAAAQABAAD"
-    const body = JSON.stringify({
-      choices: [{ message: { images: [{ image_url: { url: `data:image/jpg;base64,${base64}` } }] } }],
-    })
+    const body = JSON.stringify({ image: `data:image/jpg;base64,${base64}` })
     const result = parseImageResponse(body)
     expect(result!.format).toBe("jpeg")
     expect(result!.base64).toBe(base64)
@@ -155,5 +105,44 @@ describe("generate-image model catalog", () => {
       expect(typeof m.label).toBe("string")
       expect(m.label.length).toBeGreaterThan(0)
     }
+  })
+})
+
+describe("generate-image multipart body", () => {
+  test("builds valid multipart body with prompt, model and image", () => {
+    const imageBuf = Buffer.from([0x89, 0x50, 0x4e, 0x47])
+    const body = buildMultipartBody("testBoundary", "Make it sunset", "google/gemini-2.5-flash-image", imageBuf, "photo.png")
+
+    const text = body.toString("utf-8")
+    expect(text).toContain("--testBoundary")
+    expect(text).toContain('name="prompt"')
+    expect(text).toContain("Make it sunset")
+    expect(text).toContain('name="model"')
+    expect(text).toContain("google/gemini-2.5-flash-image")
+    expect(text).toContain('name="images[]"')
+    expect(text).toContain('filename="photo.png"')
+    expect(text).toContain("Content-Type: image/png")
+    expect(text).toContain("--testBoundary--")
+  })
+
+  test("detects JPEG from filename extension", () => {
+    const body = buildMultipartBody("b", "test", "m", Buffer.from([0xff]), "photo.jpg")
+
+    const text = body.toString("utf-8")
+    expect(text).toContain("Content-Type: image/jpeg")
+  })
+
+  test("detects JPEG from .jpeg extension", () => {
+    const body = buildMultipartBody("b", "test", "m", Buffer.from([0xff]), "photo.jpeg")
+
+    const text = body.toString("utf-8")
+    expect(text).toContain("Content-Type: image/jpeg")
+  })
+
+  test("defaults to JPEG for unknown extensions", () => {
+    const body = buildMultipartBody("b", "test", "m", Buffer.from([0xff]), "photo.gif")
+
+    const text = body.toString("utf-8")
+    expect(text).toContain("Content-Type: image/jpeg")
   })
 })

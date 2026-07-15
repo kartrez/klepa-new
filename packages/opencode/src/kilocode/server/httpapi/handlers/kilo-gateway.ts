@@ -2,7 +2,7 @@ import {
   GatewayError,
   fetchCloudSession,
   fetchCloudSessionForImport,
-  fetchKiloImageModels,
+  fetchKlepaImageModels,
   getCloudSessions,
   getOrganizationId,
   getToken,
@@ -532,23 +532,13 @@ export const kiloGatewayHandlers = HttpApiBuilder.group(InstanceHttpApi, "kilo",
     })
 
     const imageModels = Effect.fn("KiloGatewayHttpApi.imageModels")(function* () {
-      const info = yield* proxyAuth()
-      if (!info.auth) return yield* Effect.fail(new HttpApiError.Unauthorized({}))
-      if (!info.token) return yield* Effect.fail(new HttpApiError.Unauthorized({}))
-
       const result = yield* Effect.tryPromise({
-        try: () =>
-          fetchKiloImageModels({
-            kilocodeToken: info.token,
-            kilocodeOrganizationId: info.organizationId,
-          }),
+        try: () => fetchKlepaImageModels(),
         catch: () => new HttpApiError.BadRequest({}),
       })
 
       if (result.error) {
-        const err =
-          result.error.kind === "unauthorized" ? new HttpApiError.Unauthorized({}) : new HttpApiError.BadRequest({})
-        return yield* Effect.fail(err)
+        return yield* Effect.fail(new HttpApiError.BadRequest({}))
       }
 
       return result.models

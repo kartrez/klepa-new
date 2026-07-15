@@ -353,12 +353,12 @@ export const KiloGatewayApi = HttpApi.make("kilo")
         HttpApiEndpoint.get("imageModels", KiloGatewayPaths.imageModels, {
           query: WorkspaceRoutingQuery,
           success: described(Schema.Array(ImageModel), "Image-capable model list"),
-          error: [HttpApiError.BadRequest, HttpApiError.Unauthorized],
+          error: [HttpApiError.BadRequest],
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "kilo.models.images",
             summary: "Image generation models",
-            description: "List image-capable models from the Kilo Gateway OpenRouter passthrough",
+            description: "List image generation models from gpt-chat.by",
           }),
         ),
         HttpApiEndpoint.get("notifications", KiloGatewayPaths.notifications, {
