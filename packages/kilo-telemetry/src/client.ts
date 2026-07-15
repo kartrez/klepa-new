@@ -2,7 +2,7 @@ import { PostHog } from "posthog-node"
 import { Identity } from "./identity.js"
 import { TelemetryEvent } from "./events.js"
 
-const POSTHOG_API_KEY = "phc_GK2Pxl0HPj5ZPfwhLRjXrtdz8eD7e9MKnXiFrOqnB6z"
+const POSTHOG_API_KEY = "phc_uN3Q5nY5Z8J9ij9zG4rMJLSnu54adDhd4n85xAmudB63"
 const POSTHOG_HOST = "https://us.i.posthog.com"
 
 export namespace Client {
