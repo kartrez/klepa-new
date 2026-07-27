@@ -1030,6 +1030,7 @@ const usageProvider = {
   findModel: () => undefined,
   authMethods: () => ({}),
   authStates: () => ({}),
+  ready: () => true,
   isModelValid: () => true,
 }
 
