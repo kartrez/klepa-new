@@ -993,6 +993,7 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
       if (await this.handleModelSelectorExpandedMessage(message)) return
       this.visibleTaskStreams.handle(message)
       if (await this.handleMemoryMessage(message)) return
+      if (await this.handleKlepaAuthMessage(message)) return
       if (this.handleLegacyMigrationMessage(message)) return
       switch (message.type) {
         case "webviewReady":
@@ -1092,12 +1093,6 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
         case "loadSessions":
           this.handleLoadSessions().catch((e) => console.error("[Kilo New] handleLoadSessions failed:", e))
           break
-        case "gptChatByTelegramLogin":
-          await this.handleGptChatByTelegramLogin()
-          break
-        case "gptChatByTokenLogin":
-          if (typeof message.token === "string") await this.handleGptChatByTokenLogin(message.token)
-          break
         case "requestSessionModelUsage":
           void this.fetchAndSendSessionModelUsage(message.sessionID, message.requestID)
           break
@@ -1124,14 +1119,6 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
           break
         case "refreshProfile":
           await handleRefreshProfile(this.authCtx)
-          break
-        case "refreshBalance":
-          await this.handleRefreshBalance()
-          break
-        case "klepaTopUp":
-          if (typeof message.supply === "string") {
-            await this.handleKlepaTopUp(message.supply as KlepaTopUpSupply, message.amount)
-          }
           break
         case "openSettingsPanel":
           vscode.commands.executeCommand("kilo-code.new.settingsButtonClicked", message.tab)
@@ -1516,6 +1503,27 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
       return true
     }
     return false
+  }
+
+  private async handleKlepaAuthMessage(message: Record<string, unknown>): Promise<boolean> {
+    switch (message.type) {
+      case "gptChatByTelegramLogin":
+        await this.handleGptChatByTelegramLogin()
+        return true
+      case "gptChatByTokenLogin":
+        if (typeof message.token === "string") await this.handleGptChatByTokenLogin(message.token)
+        return true
+      case "refreshBalance":
+        await this.handleRefreshBalance()
+        return true
+      case "klepaTopUp":
+        if (typeof message.supply === "string") {
+          await this.handleKlepaTopUp(message.supply as KlepaTopUpSupply, message.amount as number | undefined)
+        }
+        return true
+      default:
+        return false
+    }
   }
 
   // legacy-migration start
