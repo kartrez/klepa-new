@@ -1,5 +1,184 @@
 # @kilocode/cli
 
+## 7.4.16
+
+### Minor Changes
+
+- [#12392](https://github.com/Kilo-Org/kilocode/pull/12392) [`16988a5`](https://github.com/Kilo-Org/kilocode/commit/16988a558100615f20c68af8a53b6ad56fd70f58) - Add a `notify_user` tool that lets an agent send a push notification to the user's phone (Kilo mobile app) for explicitly requested pings and significant mid-run milestones. The tool sends a single `agent_notification` item over the session's existing authenticated ingest channel with a bounded readiness wait, returns a friendly failure when the session is not connected to Kilo cloud, and never prompts for permission. Delivery may still be suppressed server-side by the user's notification preference, per-session rate limits, or active presence in the session.
+
+- [#12370](https://github.com/Kilo-Org/kilocode/pull/12370) [`b367105`](https://github.com/Kilo-Org/kilocode/commit/b367105c8d648c8e05b62c2d27a28a95a4772f61) Thanks [@hdcodedev](https://github.com/hdcodedev)! - Support deleting queued chat messages from the VS Code chat before they run.
+
+- [#12327](https://github.com/Kilo-Org/kilocode/pull/12327) [`aa22680`](https://github.com/Kilo-Org/kilocode/commit/aa22680feef2d8b9e1a60ddae4280cedb2cf78f0) - `kilo remote` instances now advertise themselves on the relay heartbeat. Each heartbeat carries the host's hostname, the project directory name, and the CLI build version, and each session entry advertises the platform it was created on. The cloud relay learns about a freshly-connected instance immediately (no 10s wait for the first timer tick), and the advertisement is race-safe across the explicit `kilo remote` command and bootstrap auto-enable (`KILO_REMOTE=1` / `remote_control` config). Legacy CLIs that send neither field remain wire-compatible.
+
+- [#12394](https://github.com/Kilo-Org/kilocode/pull/12394) [`e72238a`](https://github.com/Kilo-Org/kilocode/commit/e72238a6655bb495e24c588fa047b5b162da8f1e) - Support file attachments in remote CLI sessions.
+
+- [#11849](https://github.com/Kilo-Org/kilocode/pull/11849) [`fe01f53`](https://github.com/Kilo-Org/kilocode/commit/fe01f53e2bddbadc51736ff81dcc2e022fe6f27f) - Run asynchronous Cloud Agent tasks with repository, model, mode, and organization defaults through `kilo cloud`. Add `--stream` to `kilo cloud start` to print admission output and then stream WebSocket events as JSONL until completion or inactivity ends the stream.
+
+- [#12456](https://github.com/Kilo-Org/kilocode/pull/12456) [`3d648d7`](https://github.com/Kilo-Org/kilocode/commit/3d648d7fcdc186f86b2c63ab842e70acb1f0aee2) - Reference past chats inline with `@` in the prompt. Typing `@` now surfaces a "Past chats" option that opens a searchable picker of previous sessions (scoped to the current workspace/worktree, searched like the Agent Manager session search); selecting one attaches that session's transcript as context so the model can build on a prior conversation. Clicking the mention opens that session. Available in the CLI TUI and the VS Code extension.
+
+- [#12434](https://github.com/Kilo-Org/kilocode/pull/12434) [`dcc0d64`](https://github.com/Kilo-Org/kilocode/commit/dcc0d64a3249bdd3aa27d564759253126ff9a5fe) Thanks [@Githubguy132010](https://github.com/Githubguy132010)! - Show tokens-per-second text-generation throughput (TG) on each assistant message and in the usage sidebar, computed from step duration and tokens. The toggle "Show Token Throughput" in Display settings controls both surfaces. PP (prompt-processing) support lands in a follow-up once the upstream llama.cpp metadata wiring ships.
+
+### Patch Changes
+
+- [#12475](https://github.com/Kilo-Org/kilocode/pull/12475) [`c72817e`](https://github.com/Kilo-Org/kilocode/commit/c72817e67fe1349894ab21995195b00d46b39777) Thanks [@LCZcn96](https://github.com/LCZcn96)! - Load global skills reliably from projects outside Git repositories.
+
+- [#12497](https://github.com/Kilo-Org/kilocode/pull/12497) [`23963e3`](https://github.com/Kilo-Org/kilocode/commit/23963e32c840fa98af4efd8443fc95082a1b8277) - Restore stream idle timeouts to opt-in provider configuration instead of aborting quiet model streams by default.
+
+- [#12393](https://github.com/Kilo-Org/kilocode/pull/12393) [`9262f2b`](https://github.com/Kilo-Org/kilocode/commit/9262f2b49acbc1f2587fceb27abbfc8ebf9a45f1) - Remote CLI sessions no longer appear frozen on mobile when the connection to the session relay stalls; they now recover on their own instead of staying read-only until the CLI is restarted. Token acquisition and connection attempts are bounded by deadlines with a single fenced retry owner, and heartbeat session gathers are bounded so one stuck gather can no longer silently kill every future heartbeat.
+
+- [#12485](https://github.com/Kilo-Org/kilocode/pull/12485) [`079fd04`](https://github.com/Kilo-Org/kilocode/commit/079fd04b413cf4e14cef40475abd1b7d08949383) Thanks [@rakshith1928](https://github.com/rakshith1928)! - Fix compaction failure against strict OpenAI-compatible providers during context compaction. The compaction path no longer leaks `maxOutputTokens` into provider options, which was rejected by strict upstreams with "Unsupported parameter(s)".
+
+- [#11940](https://github.com/Kilo-Org/kilocode/pull/11940) [`0d830cb`](https://github.com/Kilo-Org/kilocode/commit/0d830cbd32ae78232d5acae97fb825a1d64ae661) Thanks [@rakshith1928](https://github.com/rakshith1928)! - Fix: inject `$schema` into config files using jsonc-parser, avoiding write-on-read for comment-first JSONC and preventing unnecessary file rewrites on every load
+
+- [#12508](https://github.com/Kilo-Org/kilocode/pull/12508) [`0fe46ec`](https://github.com/Kilo-Org/kilocode/commit/0fe46ecb8da9ac133a31e757efba8ee5de7a3191) - Fix a fatal startup crash ("attempt to write a readonly database") when the local database or its WAL sidecar files lost write permission. Kilo now repairs the permissions automatically when it safely can, and otherwise reports the exact file to fix instead of an opaque error.
+
+- [#12458](https://github.com/Kilo-Org/kilocode/pull/12458) [`182d18b`](https://github.com/Kilo-Org/kilocode/commit/182d18bb28824ce045de7eb635e44ec508617588) - Keep Plan and Architect mode source edits denied when agent-specific permissions request edit approval.
+
+- [#12496](https://github.com/Kilo-Org/kilocode/pull/12496) [`2fcb137`](https://github.com/Kilo-Org/kilocode/commit/2fcb137ebcbf9101ca655804d0a61af2f222bbc5) - Preserve unexpected provider finish reasons and show the request and Gateway generation IDs when a response ends unexpectedly.
+
+- [#12488](https://github.com/Kilo-Org/kilocode/pull/12488) [`c25f041`](https://github.com/Kilo-Org/kilocode/commit/c25f041eb3922defc4dadb9ad7b2f8c8edb74fbd) - Show the request ID when a model response ends without a finish reason.
+
+- Updated dependencies [[`2fcb137`](https://github.com/Kilo-Org/kilocode/commit/2fcb137ebcbf9101ca655804d0a61af2f222bbc5), [`f715e2f`](https://github.com/Kilo-Org/kilocode/commit/f715e2f5fa4db5abe5c734e1c360e8da3367f3e5), [`dcc0d64`](https://github.com/Kilo-Org/kilocode/commit/dcc0d64a3249bdd3aa27d564759253126ff9a5fe)]:
+  - @kilocode/sdk@7.5.0
+  - @kilocode/kilo-gateway@7.4.16
+  - @kilocode/plugin@7.4.16
+  - @opencode-ai/tui@7.4.16
+  - @opencode-ai/ui@7.4.16
+  - @kilocode/kilo-indexing@7.4.16
+  - @kilocode/kilo-telemetry@7.4.16
+  - @kilocode/plugin-atomic-chat@7.4.16
+  - @opencode-ai/server@7.4.16
+
+## 7.4.15
+
+### Patch Changes
+
+- [#12249](https://github.com/Kilo-Org/kilocode/pull/12249) [`cd205d8`](https://github.com/Kilo-Org/kilocode/commit/cd205d857a00d0bf1630cac530c739f31bff5dfb) - Prevent agent and subagent sessions from stalling indefinitely with a 60-second model-stream idle watchdog that pauses while local tools run. Set `chunkTimeout: false` to disable it.
+
+- [#12427](https://github.com/Kilo-Org/kilocode/pull/12427) [`2dc1a52`](https://github.com/Kilo-Org/kilocode/commit/2dc1a520cc58bb587c8ffb8ba8476fa0a6e37e04) - Improve xAI prompt cache hit rate by sending promptCacheKey by default for xAI models
+
+- [#12422](https://github.com/Kilo-Org/kilocode/pull/12422) [`28d015f`](https://github.com/Kilo-Org/kilocode/commit/28d015f8fefd166348e4d4eb0b4c2ae0aa011a03) - Simplify project memory settings and activity visibility, replace direct editing with folder inspection, add nested memory slash-command completion and status views, improve empty-project handling, compact native tool-call summaries, and remove legacy memory audit logs.
+
+- [#12414](https://github.com/Kilo-Org/kilocode/pull/12414) [`badf70d`](https://github.com/Kilo-Org/kilocode/commit/badf70dcedc9559769969c34aff9a63fcc9bdb5f) - Keep Linux sandbox setup working when a writable directory contains an unreadable subdirectory (for example a folder with mode 600); unreadable subdirectories are now protected with a read-only mount instead of failing every sandboxed tool call with an access error.
+
+- Updated dependencies [[`28d015f`](https://github.com/Kilo-Org/kilocode/commit/28d015f8fefd166348e4d4eb0b4c2ae0aa011a03)]:
+  - @kilocode/kilo-memory@7.4.14
+
+## 7.4.13
+
+### Minor Changes
+
+- [#12271](https://github.com/Kilo-Org/kilocode/pull/12271) [`38013f7`](https://github.com/Kilo-Org/kilocode/commit/38013f70fad82f55b9ebe02d8d6883a26d791934) - Allow agents to stop and remove a targeted Agent Manager session.
+
+- [#12306](https://github.com/Kilo-Org/kilocode/pull/12306) [`c081f58`](https://github.com/Kilo-Org/kilocode/commit/c081f582abecaba98a303069140d014a9ee90ca9) - Configure a custom file extension allowlist for codebase indexing to limit scans to relevant project files and support additional text formats.
+
+- [#12224](https://github.com/Kilo-Org/kilocode/pull/12224) [`df9e1fb`](https://github.com/Kilo-Org/kilocode/commit/df9e1fb1e95275d600a1eb1e969ab19279e95417) - Remote CLI: expose slash command discovery, execution, and `/new` session creation over the relay. `list_commands` and `send_command` (including the built-in `compact` flow) are scoped to the current session's directory. `create_session` creates a root session in that directory, attaches it to the relay heartbeat set, and returns the new session id only after the heartbeat completes so the mobile client can navigate immediately. Failures are sanitized; the command is not auto-retried and the user may retry manually after a transient relay failure.
+
+### Patch Changes
+
+- [#12303](https://github.com/Kilo-Org/kilocode/pull/12303) [`7c07a47`](https://github.com/Kilo-Org/kilocode/commit/7c07a474660e8a5c9636778ad7d2b2fd8e233157) - Improve CLI sidebar usage sections with cent-formatted costs, collapsible details, and aligned model totals.
+
+- [#12304](https://github.com/Kilo-Org/kilocode/pull/12304) [`79fe757`](https://github.com/Kilo-Org/kilocode/commit/79fe75745fc6abd7bd3aad0c079e8f5150751a2c) - Display here-document content as plain text in terminal approval prompts.
+
+- [#12302](https://github.com/Kilo-Org/kilocode/pull/12302) [`ad66c90`](https://github.com/Kilo-Org/kilocode/commit/ad66c908a4bec5f29e6d83fa9efbd1f6cc2cd416) - Clarify when reverting a conversation does not restore workspace changes and link disabled snapshots to the Checkpoints setting.
+
+- [#12329](https://github.com/Kilo-Org/kilocode/pull/12329) [`084bcea`](https://github.com/Kilo-Org/kilocode/commit/084bceadaedf193568ccf71256bd299c0d11e90c) - Fix Cloud Agent session imports in installed CLI builds and prevent malformed exports or write failures from leaving partial imports.
+
+- [#12314](https://github.com/Kilo-Org/kilocode/pull/12314) [`520679a`](https://github.com/Kilo-Org/kilocode/commit/520679a91f320656cb4dbffe74f0a37e521d45c2) - Keep the CLI sidebar branch label in sync when Git branches change outside Kilo.
+
+- [#12378](https://github.com/Kilo-Org/kilocode/pull/12378) [`b402cc2`](https://github.com/Kilo-Org/kilocode/commit/b402cc2635c1dae836a684f9d7a981c05491a930) - Include image-output models in the Kilo Gateway chat model list.
+
+- [#12335](https://github.com/Kilo-Org/kilocode/pull/12335) [`99227f6`](https://github.com/Kilo-Org/kilocode/commit/99227f67478b44b06a18935792bd655c774f174a) Thanks [@shssoichiro](https://github.com/shssoichiro)! - Start the TUI from standalone CLI installations without requiring project-local OpenTUI dependencies.
+
+- Updated dependencies [[`084bcea`](https://github.com/Kilo-Org/kilocode/commit/084bceadaedf193568ccf71256bd299c0d11e90c), [`c081f58`](https://github.com/Kilo-Org/kilocode/commit/c081f582abecaba98a303069140d014a9ee90ca9), [`ff703fb`](https://github.com/Kilo-Org/kilocode/commit/ff703fba621e35a4a5d8e4801620502228cca5bf)]:
+  - @kilocode/kilo-gateway@7.4.12
+  - @kilocode/kilo-indexing@7.5.0
+  - @kilocode/kilo-telemetry@7.4.12
+  - @opencode-ai/server@7.4.12
+  - @opencode-ai/tui@7.4.9
+  - @opencode-ai/ui@7.4.12
+
+## 7.4.11
+
+### Minor Changes
+
+- [#12255](https://github.com/Kilo-Org/kilocode/pull/12255) [`e084ab7`](https://github.com/Kilo-Org/kilocode/commit/e084ab7492eb6f330768157663b29c347dc0fa18) - Improve CLI project-memory controls, status, activity indicators, and optional recall details.
+
+- [#12250](https://github.com/Kilo-Org/kilocode/pull/12250) [`bd69158`](https://github.com/Kilo-Org/kilocode/commit/bd69158131aafdcc2f44aede22b573c2b0432f21) - Support verbose project-memory settings and show recalled memory snippets in conversation markers when enabled.
+
+### Patch Changes
+
+- [#12242](https://github.com/Kilo-Org/kilocode/pull/12242) [`06c2337`](https://github.com/Kilo-Org/kilocode/commit/06c23379d8e07b583591cf3296c6fab4177d3a26) - Speed up local conversation recall searches on large histories.
+
+- [#12252](https://github.com/Kilo-Org/kilocode/pull/12252) [`e67635d`](https://github.com/Kilo-Org/kilocode/commit/e67635d2702d0352d7322a8cfd86f0786af13029) - Restore directory `@`-mentions by listing their entries without inlining child file contents. Untrusted external directory attachments remain denied.
+
+- [#12274](https://github.com/Kilo-Org/kilocode/pull/12274) [`5180c10`](https://github.com/Kilo-Org/kilocode/commit/5180c10c4f69500ce303437646371500a71dba46) - Show newly submitted messages immediately after reverting a conversation.
+
+- [#12086](https://github.com/Kilo-Org/kilocode/pull/12086) [`c654f1e`](https://github.com/Kilo-Org/kilocode/commit/c654f1e3d1efae339a20a44b6cd7e2f78deab4eb) Thanks [@rakshith1928](https://github.com/rakshith1928)! - Fix Grok 4.5 reasoning variants not showing up in the model picker.
+
+- [#12267](https://github.com/Kilo-Org/kilocode/pull/12267) [`e3124d3`](https://github.com/Kilo-Org/kilocode/commit/e3124d31472b8fa652418fae9e583ef2b29c16e9) - Retry incomplete model responses that end without final output or tool activity while preserving partial answers and completed tools.
+
+- Updated dependencies [[`319f159`](https://github.com/Kilo-Org/kilocode/commit/319f159ac333d18855a72ddb1fa61ed471ebf2d9), [`30e7ec4`](https://github.com/Kilo-Org/kilocode/commit/30e7ec4ab45fac724b41ec0b4342e272e7f584d2), [`bd69158`](https://github.com/Kilo-Org/kilocode/commit/bd69158131aafdcc2f44aede22b573c2b0432f21)]:
+  - @kilocode/kilo-gateway@7.4.10
+  - @kilocode/kilo-memory@7.5.0
+  - @kilocode/sdk@7.5.0
+  - @kilocode/kilo-indexing@7.4.10
+  - @kilocode/kilo-telemetry@7.4.10
+  - @kilocode/plugin@7.4.10
+  - @opencode-ai/ui@7.4.10
+  - @opencode-ai/server@7.4.10
+  - @kilocode/plugin-atomic-chat@7.4.10
+
+## 7.4.9
+
+### Patch Changes
+
+- [#12244](https://github.com/Kilo-Org/kilocode/pull/12244) [`fe41426`](https://github.com/Kilo-Org/kilocode/commit/fe4142630c7dddf19e81b2f3363e06b4aba8194a) - Fix Agent Manager tool calls through providers that require object-root input schemas without root combinators.
+
+- [#12243](https://github.com/Kilo-Org/kilocode/pull/12243) [`e4ceeae`](https://github.com/Kilo-Org/kilocode/commit/e4ceeaebb911a7350b9aaa7851aa39293c0892f8) - Prevent stalled operating system process queries from blocking background process management.
+
+## 7.4.8
+
+### Minor Changes
+
+- [#12159](https://github.com/Kilo-Org/kilocode/pull/12159) [`1083bb8`](https://github.com/Kilo-Org/kilocode/commit/1083bb82b65e986dfbc7092647b6ee2650951265) - Report active CLI and VS Code app and session presence.
+
+### Patch Changes
+
+- [#12160](https://github.com/Kilo-Org/kilocode/pull/12160) [`ba6e5b9`](https://github.com/Kilo-Org/kilocode/commit/ba6e5b9dfcddb6b5752e1c06951098213a2ceabe) - Allow persistent approval for shell access to a specific global skill directory while keeping other Kilo configuration protected.
+
+- [#12097](https://github.com/Kilo-Org/kilocode/pull/12097) [`22d6edb`](https://github.com/Kilo-Org/kilocode/commit/22d6edbe59a82f87362e8a49e739f8d4a4802f90) - Release project file handles immediately after reads on Windows so editors and tools can replace existing files without restarting Kilo.
+
+- [#12175](https://github.com/Kilo-Org/kilocode/pull/12175) [`bd08c13`](https://github.com/Kilo-Org/kilocode/commit/bd08c1341289c5d30facad6bcfed4b02cd33262d) - Preserve the selected model reasoning variant when forking a session.
+
+- [#12128](https://github.com/Kilo-Org/kilocode/pull/12128) [`ad2cc71`](https://github.com/Kilo-Org/kilocode/commit/ad2cc712d084e2540d4846f561b2cfe39ee9ee15) Thanks [@rakshith1928](https://github.com/rakshith1928)! - Surface an invalid Kilo `indexing.model` configuration as an indexing Error status instead of silently falling back to the default model.
+
+- [#11783](https://github.com/Kilo-Org/kilocode/pull/11783) [`6a3e5f3`](https://github.com/Kilo-Org/kilocode/commit/6a3e5f39011e4b1a63ab5d0ae0dbf8195ea29d4c) - Inherit sandbox state when a sandboxed agent starts new Agent Manager sessions.
+
+- [#12203](https://github.com/Kilo-Org/kilocode/pull/12203) [`750b622`](https://github.com/Kilo-Org/kilocode/commit/750b622f487b17d5b5344cace403e80fa3374935) - Keep Agent Manager sessions running when concurrent branch-name generation times out during model refresh.
+
+- [#12174](https://github.com/Kilo-Org/kilocode/pull/12174) [`3ba4c33`](https://github.com/Kilo-Org/kilocode/commit/3ba4c33544451076bd5ecb3b698e74ede0434c82) - Inspect managed Agent Manager sessions and send a targeted prompt to an idle existing session from the native Agent Manager tool. Require a separate explicit approval before prompting another managed session.
+
+- [#12156](https://github.com/Kilo-Org/kilocode/pull/12156) [`6f11e35`](https://github.com/Kilo-Org/kilocode/commit/6f11e3576488e06e99337c81abb29f5e8aa8908c) - Preserve gateway and provider errors when chunked compaction fails instead of reporting every failure as a context overflow.
+
+- [#12205](https://github.com/Kilo-Org/kilocode/pull/12205) [`2045190`](https://github.com/Kilo-Org/kilocode/commit/204519025ae5f00abe41afdec4c935113002874c) - Temporarily disable free-model session and Git workspace data export.
+
+- [#12158](https://github.com/Kilo-Org/kilocode/pull/12158) [`3b1e07c`](https://github.com/Kilo-Org/kilocode/commit/3b1e07cc0033bdb37e762ed6e0f85dab4214780d) - Enforce read and ignore permissions when file mentions add content to a prompt.
+
+- [#12207](https://github.com/Kilo-Org/kilocode/pull/12207) [`c49560a`](https://github.com/Kilo-Org/kilocode/commit/c49560af0f94459015d3fa4e1efa23ad9b291955) - Keep shared session databases writable by released Kilo clients after newer schema migrations run.
+
+- [#11424](https://github.com/Kilo-Org/kilocode/pull/11424) [`3a4438e`](https://github.com/Kilo-Org/kilocode/commit/3a4438e748f80a23bd33eb4aa824d3dffb3d588a) - Stop active Agent Manager sessions and their subagents when a session tab or the Agent Manager tab closes.
+
+- Updated dependencies [[`6a3e5f3`](https://github.com/Kilo-Org/kilocode/commit/6a3e5f39011e4b1a63ab5d0ae0dbf8195ea29d4c), [`227c65d`](https://github.com/Kilo-Org/kilocode/commit/227c65d1004fc1f48e71335cc574a2e6986c4893), [`3ba4c33`](https://github.com/Kilo-Org/kilocode/commit/3ba4c33544451076bd5ecb3b698e74ede0434c82)]:
+  - @kilocode/sdk@7.4.8
+  - @kilocode/kilo-indexing@7.4.8
+  - @kilocode/plugin@7.4.8
+  - @opencode-ai/ui@7.4.8
+  - @kilocode/kilo-gateway@7.4.8
+  - @kilocode/plugin-atomic-chat@7.4.8
+  - @opencode-ai/server@7.4.2
+  - @kilocode/kilo-telemetry@7.4.8
+
 ## 7.4.7
 
 ## 7.4.6

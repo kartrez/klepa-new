@@ -25,8 +25,8 @@ import path from "node:path"
 const ROOT = path.resolve(import.meta.dir, "..")
 const DIR = path.join(ROOT, ".github", "workflows")
 
-// Klepa CI: typecheck, vscode tests, marketplace publish only.
-const active = new Set(["publish-extension.yml", "test-vscode.yml", "typecheck.yml"])
+// Klepa CI: marketplace publish only. Other workflows stay under disabled/.
+const active = new Set(["publish-extension.yml"])
 
 // GitHub picks up both .yml and .yaml in .github/workflows/. We accept both so
 // an upstream `.yaml` addition also shows up as unexpected drift.

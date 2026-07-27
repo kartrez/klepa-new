@@ -15,7 +15,7 @@ import type {
   SkipLegacyMigrationMessage,
   StartMigrationMessage,
 } from "./migration"
-import type { MemoryShowMessage, MemoryOperationMessage, MemoryPromptMessage, RequestMemoryMessage } from "./memory"
+import type { MemoryShowMessage, MemoryOperationMessage, RequestMemoryMessage } from "./memory"
 
 // ============================================
 // Messages FROM webview TO extension
@@ -52,6 +52,12 @@ export interface RevertSessionRequest {
 export interface UnrevertSessionRequest {
   type: "unrevertSession"
   sessionID: string
+}
+
+export interface DeleteMessageRequest {
+  type: "deleteMessage"
+  sessionID: string
+  messageID: string
 }
 
 export interface PermissionResponseRequest {
@@ -422,6 +428,12 @@ export interface RequestFileSearchMessage {
   sessionID?: string
 }
 
+export interface RequestSessionSearchMessage {
+  type: "requestSessionSearch"
+  requestId: string
+  sessionID?: string
+}
+
 export interface RequestFilePickerMessage {
   type: "requestFilePicker"
   requestId: string
@@ -452,6 +464,10 @@ export interface UpdateSettingRequest {
 
 export interface RequestTimelineSettingMessage {
   type: "requestTimelineSetting"
+}
+
+export interface RequestThroughputSettingMessage {
+  type: "requestThroughputSetting"
 }
 
 export interface RequestWorkStyleMessage {
@@ -496,6 +512,10 @@ export interface RequestIndexingStatusMessage {
 
 export interface RequestIndexingSettingsMessage {
   type: "requestIndexingSettings"
+}
+
+export interface RequestChatSettingsMessage {
+  type: "requestChatSettings"
 }
 
 export interface RequestKiloEmbeddingModelsMessage {
@@ -1233,6 +1253,7 @@ export type WebviewMessage =
   | AbortRequest
   | RevertSessionRequest
   | UnrevertSessionRequest
+  | DeleteMessageRequest
   | PermissionResponseRequest
   | CreateSessionRequest
   | ClearSessionRequest
@@ -1292,12 +1313,14 @@ export type WebviewMessage =
   | SpeechToTextStopMessage
   | SpeechToTextCancelMessage
   | RequestFileSearchMessage
+  | RequestSessionSearchMessage
   | RequestFilePickerMessage
   | RequestTerminalContextMessage
   | RequestGitChangesContextMessage
   | ChatCompletionAcceptedMessage
   | UpdateSettingRequest
   | RequestTimelineSettingMessage
+  | RequestThroughputSettingMessage
   | RequestWorkStyleMessage
   | SetWorkStyleMessage
   | ApplyWorkStyleMessage
@@ -1308,6 +1331,7 @@ export type WebviewMessage =
   | RequestGlobalConfigMessage
   | RequestIndexingStatusMessage
   | RequestIndexingSettingsMessage
+  | RequestChatSettingsMessage
   | RequestKiloEmbeddingModelsMessage
   | UpdateConfigMessage
   | OpenSettingsTabRequest
@@ -1432,7 +1456,6 @@ export type WebviewMessage =
   | RequestMemoryMessage
   | MemoryShowMessage
   | MemoryOperationMessage
-  | MemoryPromptMessage
   | CreateSectionRequest
   | RenameSectionRequest
   | DeleteSectionRequest

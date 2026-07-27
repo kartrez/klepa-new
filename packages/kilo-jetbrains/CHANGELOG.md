@@ -1,5 +1,83 @@
 # Changelog
 
+## 7.4.16
+
+### Patch Changes
+
+- [#12491](https://github.com/Kilo-Org/kilocode/pull/12491) [`2b13e7d`](https://github.com/Kilo-Org/kilocode/commit/2b13e7da2a6a776baeb2d797cd5aaeb07a526c0b) - Improve JetBrains diff previews by hiding hunk headers and adding full-path tooltips to clickable file links.
+
+- [#12491](https://github.com/Kilo-Org/kilocode/pull/12491) [`5c526f1`](https://github.com/Kilo-Org/kilocode/commit/5c526f140b78b13608ad3855532f5215c0b29675) - Render edit tool results with a clickable file target and a highlighted, simplified diff view.
+
+- [#12491](https://github.com/Kilo-Org/kilocode/pull/12491) [`73942c3`](https://github.com/Kilo-Org/kilocode/commit/73942c3f262dda53030d748e6c08f84db2384253) - Open edit tool file links directly when multiple files share the same name.
+
+- [#12491](https://github.com/Kilo-Org/kilocode/pull/12491) [`dd31044`](https://github.com/Kilo-Org/kilocode/commit/dd3104400840e1b4641097bf892e25dfccfd592d) - Render multi-file apply_patch edits as a "Patch" with a file-count tag and one section per file, each showing a clickable filename link and its own changes badge aligned with the diff.
+
+- [#12491](https://github.com/Kilo-Org/kilocode/pull/12491) [`79e606e`](https://github.com/Kilo-Org/kilocode/commit/79e606ebcbb15d20b5fde29d614f07270b1c0b3d) - Smooth out chat scrolling in large JetBrains sessions by only refreshing hover state for the message under the pointer.
+
+- [#12491](https://github.com/Kilo-Org/kilocode/pull/12491) [`95ae0e0`](https://github.com/Kilo-Org/kilocode/commit/95ae0e0b3b066ec5ab60c36b7bcffb973a942872) - Improve chat scrolling performance in large JetBrains sessions.
+
+- [#12491](https://github.com/Kilo-Org/kilocode/pull/12491) [`b2a3a8d`](https://github.com/Kilo-Org/kilocode/commit/b2a3a8dc10d5f579396e1bd76e16a0eef696bede) - Size edit and shell preview popovers to their content with a wider maximum width.
+
+## 7.5.0
+
+### Minor Changes
+
+- [#12437](https://github.com/Kilo-Org/kilocode/pull/12437) [`af33ede`](https://github.com/Kilo-Org/kilocode/commit/af33eded9e4ac1988d218e911b5ff0d4e1b9d8b1) - Add Rules settings for instruction files and Claude Code compatibility. Fix cloud session history import failing with an HTTP 400 error.
+
+- [#12416](https://github.com/Kilo-Org/kilocode/pull/12416) [`a9a9b78`](https://github.com/Kilo-Org/kilocode/commit/a9a9b78b97290e855cda3dd7118a429503802396) - Support viewing, opening, editing, deleting, and configuring JetBrains skill sources.
+
+### Patch Changes
+
+- [#12291](https://github.com/Kilo-Org/kilocode/pull/12291) [`0672375`](https://github.com/Kilo-Org/kilocode/commit/067237564a170e84bc60f42b50bcba99ba9fe0c3) - Improve the JetBrains permission dialog with clearer auto-approve rule actions, hints, and command styling.
+
+- [#12291](https://github.com/Kilo-Org/kilocode/pull/12291) [`e9d0af5`](https://github.com/Kilo-Org/kilocode/commit/e9d0af577359e27728d4b47442d861ac2e5c6e1e) - Honor saved JetBrains bash permission rules when running with isolated dev storage.
+
+## 7.4.12
+
+### Patch Changes
+
+- [#12191](https://github.com/Kilo-Org/kilocode/pull/12191) [`4d676b6`](https://github.com/Kilo-Org/kilocode/commit/4d676b68d2d0dd025c7d1a6684f49f3d03e9d12d) - Use Kilo Core for JetBrains @ file completion.
+
+## 7.4.10
+
+### Patch Changes
+
+- [#12217](https://github.com/Kilo-Org/kilocode/pull/12217) [`d6b36a0`](https://github.com/Kilo-Org/kilocode/commit/d6b36a028cc0a4b7bfd158d75e287c110e2838f7) - Support editing custom OpenAI-compatible providers from JetBrains settings and replace their Disconnect action with Edit and Delete. Added or edited providers stay selected, and the custom provider dialog now closes after a successful save.
+
+- [#12217](https://github.com/Kilo-Org/kilocode/pull/12217) [`6077c1c`](https://github.com/Kilo-Org/kilocode/commit/6077c1c3b36d4c5cd68f206fc146ca472d841c5e) - Fix adding a Custom OpenAI-Compatible Provider silently failing. The dialog now requires at least one model and reports save errors inline so you can correct your input and retry without re-entering the form.
+
+- [#12217](https://github.com/Kilo-Org/kilocode/pull/12217) [`cae3270`](https://github.com/Kilo-Org/kilocode/commit/cae3270c9dacc4097a681539cf3e07cfadceaca7) - Match the model picker Close button styling to JetBrains dialog primary buttons.
+
+- [#12217](https://github.com/Kilo-Org/kilocode/pull/12217) [`cae3270`](https://github.com/Kilo-Org/kilocode/commit/cae3270c9dacc4097a681539cf3e07cfadceaca7) - Use a trash icon for provider delete and show provider edit/delete actions on selection, matching the other settings lists.
+
+## 7.4.6
+
+### Patch Changes
+
+- [#12215](https://github.com/Kilo-Org/kilocode/pull/12215) [`9f9509d`](https://github.com/Kilo-Org/kilocode/commit/9f9509dde55678c5f84b00741dca7f439237b467) - Scale the Kilo session UI with IntelliJ IDE zoom and presentation mode.
+
+- [#12188](https://github.com/Kilo-Org/kilocode/pull/12188) [`349f972`](https://github.com/Kilo-Org/kilocode/commit/349f9723f55662ee4598d933c09264aae575df98) - Migrate legacy v5 markdown to-do lists into populated JetBrains To-dos cards.
+
+- [#12188](https://github.com/Kilo-Org/kilocode/pull/12188) [`048a0ee`](https://github.com/Kilo-Org/kilocode/commit/048a0ee52e8a26930787e3d1fcf41b4a3b5bd57b) - Render tools from imported legacy v5 sessions in assistant turns instead of prompt bubbles.
+
+- [#12188](https://github.com/Kilo-Org/kilocode/pull/12188) [`17b0b22`](https://github.com/Kilo-Org/kilocode/commit/17b0b22d4432276ac314a2bbe9751d52f765dd47) - Import legacy v5 JetBrains settings and sessions through the migration wizard.
+
+- [#12188](https://github.com/Kilo-Org/kilocode/pull/12188) [`8a859e4`](https://github.com/Kilo-Org/kilocode/commit/8a859e49bdd0e15c9a3598945f48dbe1d48bc1b3) - Add a "Later" option to the legacy migration wizard that defers the prompt to the next startup, and stop reporting the language preference as migrated since it cannot be applied in this version.
+
+- [#12214](https://github.com/Kilo-Org/kilocode/pull/12214) [`737993e`](https://github.com/Kilo-Org/kilocode/commit/737993e21c03f89ead970281915eeca5db0349ab) - Honor JetBrains certificate and proxy settings when downloading the CLI and fetching custom provider models.
+
+- [#12180](https://github.com/Kilo-Org/kilocode/pull/12180) [`18e798e`](https://github.com/Kilo-Org/kilocode/commit/18e798e81cd3a6584c6820c9ac710ceac24d0a97) - Use the IntelliJ stop icon for the JetBrains prompt stop button.
+
+- [#12180](https://github.com/Kilo-Org/kilocode/pull/12180) [`de06c40`](https://github.com/Kilo-Org/kilocode/commit/de06c407f91fd8131c6c703386b1684e3cf0e363) - Show elapsed time in the JetBrains progress footer while Kilo is working.
+
+- [#12180](https://github.com/Kilo-Org/kilocode/pull/12180) [`b62105a`](https://github.com/Kilo-Org/kilocode/commit/b62105a6490b268526eca51ff139934f36d0d6b0) - Add a separator before the JetBrains prompt send button.
+
+- [#12180](https://github.com/Kilo-Org/kilocode/pull/12180) [`b62105a`](https://github.com/Kilo-Org/kilocode/commit/b62105a6490b268526eca51ff139934f36d0d6b0) - Match the JetBrains prompt send-button right padding to the bottom padding.
+
+- [#12180](https://github.com/Kilo-Org/kilocode/pull/12180) [`5c98a0d`](https://github.com/Kilo-Org/kilocode/commit/5c98a0d1d407efb06f92496fc66f1c823f12d577) - Fix JetBrains rollback and redo scrolling and align plan custom response font with the prompt input.
+
+- [#12180](https://github.com/Kilo-Org/kilocode/pull/12180) [`18e798e`](https://github.com/Kilo-Org/kilocode/commit/18e798e81cd3a6584c6820c9ac710ceac24d0a97) - Match the JetBrains prompt send icon color to the scroll-to-bottom button across themes.
+
 ## 7.4.6
 
 ### Patch Changes
@@ -23,6 +101,73 @@
 - [#12059](https://github.com/Kilo-Org/kilocode/pull/12059) [`8ea3f10`](https://github.com/Kilo-Org/kilocode/commit/8ea3f10495e28c8a131b805d51f8f7524895148b) - Increase spacing before non-initial user prompts in the JetBrains session transcript.
 
 ## [Unreleased]
+
+## [7.0.10] - 2026-07-24
+
+### Added
+
+- Render edit, write, and apply-patch tool results as expandable diff previews with clickable file links, change counts, syntax-highlighted diffs, and clearer multi-file patch sections.
+
+### Fixed
+
+- Improve session performance for large transcripts.
+- Fix Kilo Core failures caused by strict OpenAI-compatible compaction requests, unexpected provider finish reasons, read-only database files at startup, AWS profile credentials, and config files being rewritten just by reading them.
+
+### Changed
+
+- Update the JetBrains CLI pin from Kilo Core 7.4.13 to 7.4.15.
+
+## [7.0.9] - 2026-07-21
+
+### Added
+
+- Add a Rules settings page under Agent Behavior for managing instruction files and Claude Code compatibility.
+
+### Fixed
+
+- Restore importing cloud-only session history by updating the JetBrains CLI pin to Kilo Core 7.4.13.
+
+### Changed
+
+- Improve xAI prompt cache usage in Kilo Core for better cache hit rates.
+
+## [7.0.8] - 2026-07-21
+
+### Added
+
+- Add settings for context controls, including context mentions and ignore patterns.
+- Add settings for skills, including editing local skills and viewing remote skills as read-only.
+- Add auto-approve settings for permission rules, with filters and wildcard labels.
+- Use Kilo Core for JetBrains file mention search so @-mentions match CLI indexing behavior.
+
+### Fixed
+
+### Changed
+
+- Update the JetBrains CLI pin from Kilo Core 7.4.5 to 7.4.11.
+
+## [7.0.7] - 2026-07-15
+
+### Added
+
+- Add support for OpenAI-compatible custom providers.
+
+### Fixed
+
+- Improve custom provider setup by validating required fields and showing configuration errors in the dialog.
+- Close the custom provider dialog correctly after adding a provider.
+- Clean up deleted custom providers by using the disconnect flow.
+
+### Changed
+
+- Keep the JetBrains plugin pinned to Kilo Core 7.4.5 for this release.
+
+## [7.0.6] - 2026-07-14
+
+### Fixed
+
+- Honor the IDE's certificate and proxy settings for outbound HTTPS requests.
+- Scale the session UI correctly with IDE zoom, fixing double-scaled heights and extra empty space in the transcript and prompt composer.
 
 ## [7.0.5] - 2026-07-14
 

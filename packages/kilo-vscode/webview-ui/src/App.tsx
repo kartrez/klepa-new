@@ -203,6 +203,7 @@ export const DataBridge: Component<{ children: any }> = (props) => {
       onOpenUrl={openUrl}
       onOpenContent={openContent}
       onValidateFiles={validateFiles}
+      onNavigateToSession={(id) => session.selectSession(id)}
     >
       {props.children}
     </DataProvider>
@@ -264,6 +265,10 @@ const AppContent: Component = () => {
         break
       case "cyclePreviousAgentMode":
         if (document.hasFocus()) cycleAgent(-1)
+        break
+      case "focusSearch":
+        setCurrentView("newTask")
+        window.dispatchEvent(new CustomEvent("focusTranscriptSearch"))
         break
     }
   }

@@ -289,7 +289,7 @@
       },
       {
         "command": "kilo-code.new.agentManager.advancedWorktree",
-        "title": "Agent Manager: Advanced New Worktree",
+        "title": "Agent Manager: Configure New Worktree",
         "category": "Klepa AI"
       },
       {
@@ -439,6 +439,10 @@
         },
         {
           "command": "kilo-code.new.sidebarTitle.agentManagerOpen",
+          "when": "false"
+        },
+        {
+          "command": "kilo-code.new.agentManager.advancedWorktree",
           "when": "false"
         },
         {
