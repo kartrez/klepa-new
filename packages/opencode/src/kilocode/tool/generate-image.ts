@@ -32,6 +32,11 @@ export const DEFAULT_MODEL = "google/gemini-2.5-flash-image"
 /** Kept for test compatibility. */
 export const IMAGE_MODELS = FALLBACK_IMAGE_MODELS
 
+/** Settings model wins over the tool `model` arg so the LLM cannot clobber the user's choice. */
+export function resolveImageModel(configured?: string, requested?: string) {
+  return configured || requested || DEFAULT_MODEL
+}
+
 export type ImageFormat = "png" | "jpeg"
 
 const DATA_URL_RE = /^data:image\/(png|jpeg|jpg);base64,(.+)$/
@@ -151,7 +156,7 @@ export const GenerateImageTool = Tool.define(
             }
           }
 
-          const model = params.model ?? cfg.experimental?.image_generation_model ?? DEFAULT_MODEL
+          const model = resolveImageModel(cfg.experimental?.image_generation_model, params.model)
           const isEdit = !!params.image
 
           let inputImageBuf: Buffer | undefined

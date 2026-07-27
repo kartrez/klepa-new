@@ -282,7 +282,7 @@ export const Info = Schema.Struct({
       // kilocode_change start
       codebase_search: Schema.optional(Schema.Boolean).annotate({ description: "Enable AI-powered codebase search" }),
       image_generation: Schema.Boolean.pipe(Schema.optional, Schema.withDecodingDefault(Effect.succeed(true))).annotate({ description: "Enable AI image generation" }),
-      image_generation_model: Schema.String.pipe(Schema.optional, Schema.withDecodingDefault(Effect.succeed("google/gemini-2.5-flash-image"))).annotate({
+      image_generation_model: Schema.optional(Schema.String).annotate({
         description: "Model ID to use for image generation (default: google/gemini-2.5-flash-image)",
       }),
       agent_requirements: Schema.optional(Schema.Boolean).annotate({

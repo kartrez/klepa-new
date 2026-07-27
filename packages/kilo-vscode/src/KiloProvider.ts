@@ -3741,12 +3741,23 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
     }
   }
 
-  private async handleGptChatByTokenLogin(token: string) {
-    if (!this.client) {
-      this.postMessage({ type: "authFailed", error: "Not connected to CLI backend" })
-      return
+  private async ensureAuthClient(): Promise<boolean> {
+    if (this.client) return true
+    try {
+      await this.initializeConnection()
+    } catch (error) {
+      this.postMessage({
+        type: "authFailed",
+        error: getErrorMessage(error) || "Not connected to CLI backend",
+      })
+      return false
     }
+    if (this.client) return true
+    this.postMessage({ type: "authFailed", error: "Not connected to CLI backend" })
+    return false
+  }
 
+  private async handleGptChatByTokenLogin(token: string) {
     const key = token.trim()
     if (!key) {
       this.postMessage({ type: "authFailed", error: "API key is required" })
@@ -3754,6 +3765,8 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
     }
 
     this.postMessage({ type: "authStarted" })
+    if (!(await this.ensureAuthClient())) return
+
     try {
       await this.finishGptChatByAuth(key)
     } catch (error) {
@@ -3821,9 +3834,9 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
   }
 
   private async handleGptChatByTelegramLogin(): Promise<void> {
-    if (!this.client) return
-
     this.postMessage({ type: "authStarted" })
+    if (!(await this.ensureAuthClient())) return
+
     try {
       const token = await startTelegramAuth((url) => {
         void vscode.env.openExternal(vscode.Uri.parse(url))

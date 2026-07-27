@@ -6,6 +6,7 @@ import {
   buildMultipartBody,
   IMAGE_MODELS,
   DEFAULT_MODEL,
+  resolveImageModel,
 } from "../../../src/kilocode/tool/generate-image"
 
 describe("generate-image response parser", () => {
@@ -105,6 +106,22 @@ describe("generate-image model catalog", () => {
       expect(typeof m.label).toBe("string")
       expect(m.label.length).toBeGreaterThan(0)
     }
+  })
+})
+
+describe("generate-image resolveImageModel", () => {
+  test("prefers configured settings model over tool arg", () => {
+    expect(resolveImageModel("black-forest-labs/flux.2-flex", DEFAULT_MODEL)).toBe(
+      "black-forest-labs/flux.2-flex",
+    )
+  })
+
+  test("falls back to tool arg when settings model is unset", () => {
+    expect(resolveImageModel(undefined, "openai/gpt-5.4-image-2")).toBe("openai/gpt-5.4-image-2")
+  })
+
+  test("falls back to default when both are unset", () => {
+    expect(resolveImageModel()).toBe(DEFAULT_MODEL)
   })
 })
 
