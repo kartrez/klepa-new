@@ -51,6 +51,13 @@ const GptChatByAuthScreen: Component<GptChatByAuthScreenProps> = (props) => {
         </div>
       </button>
 
+      <Show when={props.busy}>
+        <div class="gpt-chat-by-auth-busy" role="status">
+          <Spinner />
+          <span>{language.t("gptChatBy.auth.waiting")}</span>
+        </div>
+      </Show>
+
       <div class="gpt-chat-by-auth-field">
         <TextField
           type="password"
@@ -58,11 +65,10 @@ const GptChatByAuthScreen: Component<GptChatByAuthScreenProps> = (props) => {
           value={token()}
           onChange={setToken}
           placeholder={language.t("gptChatBy.auth.apiKey.placeholder")}
-          disabled={props.busy}
         />
       </div>
 
-      <button type="button" class="gpt-chat-by-auth-card" onClick={loginWithToken} disabled={props.busy || !token().trim()}>
+      <button type="button" class="gpt-chat-by-auth-card" onClick={loginWithToken} disabled={!token().trim()}>
         <Icon name="circle-check" size="small" />
         <div class="gpt-chat-by-auth-card-text">
           <span class="gpt-chat-by-auth-card-title">{language.t("gptChatBy.auth.token.title")}</span>
@@ -70,16 +76,9 @@ const GptChatByAuthScreen: Component<GptChatByAuthScreenProps> = (props) => {
         </div>
       </button>
 
-      <Button variant="secondary" size="small" onClick={openTokenPage} disabled={props.busy}>
+      <Button variant="secondary" size="small" onClick={openTokenPage}>
         {language.t("gptChatBy.auth.getToken")}
       </Button>
-
-      <Show when={props.busy}>
-        <div class="gpt-chat-by-auth-busy" role="status">
-          <Spinner />
-          <span>{language.t("gptChatBy.auth.waiting")}</span>
-        </div>
-      </Show>
     </div>
   )
 }

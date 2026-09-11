@@ -122,6 +122,8 @@ import {
   type AuthContext,
 } from "./kilo-provider/handlers/auth"
 import {
+  AUTH_CANCELLED,
+  cancelTelegramAuth,
   completeTelegramAuth,
   isAuthCallbackPath,
   parseAuthCallback,
@@ -329,6 +331,8 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
    * and the key is resolved here. Refreshed on every provider fetch.
    */
   private storedProviderKeys: Record<string, StoredProviderKey> = {}
+  /** Last token applied by finishGptChatByAuth — повтор deep-link/polling не должен ломать вход. */
+  private gptChatByAuthToken: string | undefined
   /** Coalesce provider refreshes — at most one follow-up rerun when a request lands mid-flight. */
   private providersRefresh: Promise<void> | null = null
   private providersQueued = false
@@ -3737,7 +3741,10 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
       return
     }
 
-    if (state) completeTelegramAuth(state, token)
+    // Сайт может не вернуть state (redirect-флоу vscode-auth не эхолит его):
+    // completeTelegramAuth сам разрулит null-state через active-запись, иначе
+    // ждущий startTelegramAuth() висит до 15-минутного таймаута.
+    completeTelegramAuth(state, token)
 
     try {
       await this.finishGptChatByAuth(token)
@@ -3773,6 +3780,7 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
     }
 
     this.postMessage({ type: "authStarted" })
+    cancelTelegramAuth()
     if (!(await this.ensureAuthClient())) return
 
     try {
@@ -3787,6 +3795,8 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
 
   private async finishGptChatByAuth(token: string) {
     if (!this.client) return
+    if (this.gptChatByAuthToken === token) return
+    this.gptChatByAuthToken = token
     await saveToken(this.client, token)
     await this.disposeGlobal()
     await this.fetchAndSendProviders()
@@ -3851,6 +3861,7 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
       })
       await this.finishGptChatByAuth(token)
     } catch (error) {
+      if (getErrorMessage(error) === AUTH_CANCELLED) return
       this.postMessage({
         type: "authFailed",
         error: getErrorMessage(error) || "Login failed",

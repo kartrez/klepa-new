@@ -4,6 +4,7 @@ import type { KiloClient } from "@kilocode/sdk/v2/client"
 import {
   EXTENSION_ID,
   EXTENSION_LOGIN_PATH,
+  GPT_CHAT_BY_API_BASE,
   GPT_CHAT_BY_AUTH_URL,
   GPT_CHAT_BY_PROVIDER_ID,
 } from "../../shared/gpt-chat-by"
@@ -12,6 +13,40 @@ const pending = new Map<string, { resolve: (token: string) => void; reject: (err
 let active: { resolve: (token: string) => void; reject: (err: Error) => void } | undefined
 
 const tokenKeys = ["token", "api_key", "apiKey", "access_token", "key"] as const
+
+// Опрос одноразовой сессии vscode-auth: сайт публикует ключ по state, плагин забирает его
+// без deep-link (Qoder 1.29.0 отклоняет сторонние qoder:// маршруты). Интервал и fetch
+// вынесены наружу, чтобы юнит-тесты не ходили в сеть.
+export const sessionPoll = {
+  intervalMs: 2_000,
+  timeoutMs: 900_000,
+}
+
+type SessionStatus = { status: string; token: string | null }
+
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+async function defaultFetchSession(state: string): Promise<SessionStatus> {
+  const url = new URL(`vscode-auth/session/${state}`, GPT_CHAT_BY_API_BASE)
+  try {
+    const response = await fetch(url)
+    if (!response.ok) return { status: "pending", token: null }
+    return (await response.json()) as SessionStatus
+  } catch (err) {
+    console.error("[Kilo New] vscode-auth session poll failed:", err)
+    return { status: "pending", token: null }
+  }
+}
+
+let fetchSession: (state: string) => Promise<SessionStatus> = defaultFetchSession
+
+export function setSessionFetch(next: (state: string) => Promise<SessionStatus>) {
+  fetchSession = next
+}
+
+export function resetSessionFetch() {
+  fetchSession = defaultFetchSession
+}
 
 export function createAuthState() {
   return randomBytes(16).toString("hex")
@@ -43,7 +78,8 @@ export async function startTelegramAuth(open: (url: string) => void): Promise<st
   url.searchParams.set("redirect_uri", redirect)
   url.searchParams.set("state", state)
   open(url.toString())
-  return new Promise((resolve, reject) => {
+
+  const promise = new Promise<string>((resolve, reject) => {
     active = { resolve, reject }
     pending.set(state, { resolve, reject })
     setTimeout(() => {
@@ -51,8 +87,36 @@ export async function startTelegramAuth(open: (url: string) => void): Promise<st
       pending.delete(state)
       if (active?.resolve === resolve) active = undefined
       reject(new Error("Login timed out"))
-    }, 900_000)
+    }, sessionPoll.timeoutMs)
   })
+
+  // Параллельно с deep-link: кто первый — deep-link или опрос — тот и завершает вход.
+  void pollSession(state, promise)
+  return promise
+}
+
+async function pollSession(state: string, promise: Promise<string>): Promise<void> {
+  let settled = false
+  promise.then(
+    () => {
+      settled = true
+    },
+    () => {
+      settled = true
+    },
+  )
+
+  const deadline = Date.now() + sessionPoll.timeoutMs
+  while (!settled && Date.now() < deadline) {
+    await wait(sessionPoll.intervalMs)
+    if (settled || Date.now() >= deadline) return
+    const body = await fetchSession(state)
+    // Выигрышный GET отдаёт token; статус ready (как у claim) или иной — не важен.
+    if (body.token) {
+      completeTelegramAuth(state, body.token)
+      return
+    }
+  }
 }
 
 export function completeTelegramAuth(state: string | null, token: string | null): boolean {
@@ -73,12 +137,25 @@ export function completeTelegramAuth(state: string | null, token: string | null)
   return true
 }
 
-export function cancelTelegramAuth(state: string) {
-  const entry = pending.get(state)
-  if (!entry) return
-  pending.delete(state)
-  if (active?.resolve === entry.resolve) active = undefined
-  entry.reject(new Error("Login cancelled"))
+export const AUTH_CANCELLED = "Login cancelled"
+
+export function cancelTelegramAuth(state?: string) {
+  if (state) {
+    const entry = pending.get(state)
+    if (!entry) return
+    pending.delete(state)
+    if (active?.resolve === entry.resolve) active = undefined
+    entry.reject(new Error(AUTH_CANCELLED))
+    return
+  }
+  for (const entry of pending.values()) {
+    entry.reject(new Error(AUTH_CANCELLED))
+  }
+  pending.clear()
+  if (active) {
+    active.reject(new Error(AUTH_CANCELLED))
+    active = undefined
+  }
 }
 
 export async function saveToken(client: KiloClient, token: string) {
