@@ -21,8 +21,30 @@ for (const name of files) {
   const path = join(out, name)
   await $`bun script/verify-vsix.ts ${path}`
   console.log(`\nPublishing ${name}...`)
-  await $`vsce publish ${flag} --packagePath ${path}`
+  // --skip-duplicate: already-published targets of this version (or a client
+  // timeout after the marketplace accepted the upload) must not abort the rest.
+  await retry(() => $`vsce publish ${flag} --skip-duplicate --packagePath ${path}`, {
+    attempts: 3,
+    delay: 15_000,
+    label: `vsce publish ${name}`,
+  })
   console.log(`Published ${name}`)
 }
 
 console.log("\nAll VSIX packages published.")
+
+async function retry(fn: () => Promise<unknown>, opts: { attempts: number; delay: number; label: string }) {
+  for (let i = 1; i <= opts.attempts; i++) {
+    try {
+      return await fn()
+    } catch (err) {
+      const extra = err && typeof err === "object" ? `${(err as { stdout?: string }).stdout ?? ""}\n${(err as { stderr?: string }).stderr ?? ""}` : ""
+      const message = `${err instanceof Error ? err.message : String(err)}\n${extra}`
+      const retryable = /timeout|ECONNRESET|socket hang up|503|502/i.test(message)
+      if (!retryable || i === opts.attempts) throw err
+      console.warn(`  ${opts.label} failed (attempt ${i}/${opts.attempts}): ${message.trim()}`)
+      console.warn(`  Retrying in ${opts.delay / 1000}s...`)
+      await new Promise((r) => setTimeout(r, opts.delay))
+    }
+  }
+}
