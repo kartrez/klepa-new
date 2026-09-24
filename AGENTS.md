@@ -2,7 +2,7 @@
 
 ## Границы рабочего пространства
 
-- Этот чекаут — независимый репозиторий плагина Klepa AI (`https://github.com/kartrez/klepa-new.git`). Соседние чекауты сайта обычно находятся в `../gpt-backend`, `../gpt-frontend` и `../gpt-server`. Корень OpenSpec — соседний каталог `../gpt-openspec`.
+- Этот чекаут — независимый репозиторий плагина Klepa AI (`https://github.com/kartrez/klepa-new.git`). Соседние чекауты сайта обычно находятся в `../gpt-backend`, `../gpt-frontend`, `../gpt-server` и `../klepa-frontend`. Корень OpenSpec — соседний каталог `../gpt-openspec`.
 - Определять корень OpenSpec командой `openspec context --json` по полю `root.path` или ближайшим родительским `openspec/config.yaml`. Не зашивать абсолютный путь пользователя.
 - Изменение, затрагивающее плагин и сайт, оформляется одним изменением OpenSpec в корне OpenSpec. Артефакты пишутся по-русски, заголовки OpenSpec и `SHALL`/`MUST` остаются английскими.
 - Перед изменениями выполнить `git fetch` и `git status -sb`. Сохранять посторонние незавершённые изменения. Git-команды выполнять из этого чекаута, не из OpenSpec и не из чекаутов сайта.
