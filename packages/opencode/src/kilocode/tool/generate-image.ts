@@ -18,16 +18,17 @@ const log = Log.create({ service: "tool.generate_image" })
 const IMAGE_GEN_URL = `${GPT_CHAT_BY_API_BASE}chat/image`
 const IMAGE_EDIT_URL = `${GPT_CHAT_BY_API_BASE}chat/image/edit`
 
+export const DEFAULT_MODEL = "google/gemini-3.1-flash-image-preview"
+
 /** Fallback catalog used when the gateway is unreachable or the user is offline. */
 export const FALLBACK_IMAGE_MODELS = [
+  { value: DEFAULT_MODEL, label: "Nano Banana 2 (Gemini 3.1 Flash Image Preview)" },
   { value: "google/gemini-2.5-flash-image", label: "Gemini 2.5 Flash Image" },
   { value: "google/gemini-3-pro-image-preview", label: "Gemini 3 Pro Image Preview" },
   { value: "openai/gpt-5.4-image-2", label: "GPT-5.4 Image 2" },
   { value: "black-forest-labs/flux.2-flex", label: "Black Forest Labs FLUX.2 Flex" },
   { value: "black-forest-labs/flux.2-klein-4b", label: "Black Forest Labs FLUX.2 Klein 4B" },
 ] as const
-
-export const DEFAULT_MODEL = "google/gemini-2.5-flash-image"
 
 /** Kept for test compatibility. */
 export const IMAGE_MODELS = FALLBACK_IMAGE_MODELS

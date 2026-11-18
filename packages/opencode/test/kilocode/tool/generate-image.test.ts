@@ -121,7 +121,7 @@ describe("generate-image resolveImageModel", () => {
   })
 
   test("falls back to default when both are unset", () => {
-    expect(resolveImageModel()).toBe(DEFAULT_MODEL)
+    expect(resolveImageModel()).toBe("google/gemini-3.1-flash-image-preview")
   })
 })
 
