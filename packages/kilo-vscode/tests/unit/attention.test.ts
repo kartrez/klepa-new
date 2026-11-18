@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, mock } from "bun:test"
 import type { TuiAttentionSoundName } from "@kilocode/plugin/tui"
 import { AttentionService } from "../../src/services/attention/service"
 import type { KiloConnectionService } from "../../src/services/cli-backend/connection-service"
@@ -19,9 +19,11 @@ function setup(opts: { approve?: () => boolean | Promise<boolean> } = {}) {
       return () => undefined
     },
   } as unknown as KiloConnectionService
-  const service = new AttentionService(connection, opts)
+  const completed = mock(() => {})
+  const service = new AttentionService(connection, { ...opts, completed })
   ;(service as unknown as { notify: (sound: TuiAttentionSoundName) => void }).notify = (sound) => sounds.push(sound)
   return {
+    completed,
     sounds,
     event: (event: SSEPayload) => events[0]?.(event),
     state: (state: "connecting" | "connected" | "disconnected" | "error") => states[0]?.(state),
@@ -42,6 +44,7 @@ describe("AttentionService", () => {
     test.event(event({ type: "session.turn.close", properties: { sessionID: "s1", reason: "completed" } }))
 
     expect(test.sounds).toEqual(["done"])
+    expect(test.completed).toHaveBeenCalledTimes(1)
     test.service.dispose()
   })
 
@@ -56,6 +59,7 @@ describe("AttentionService", () => {
       }),
     )
     test.event(event({ type: "session.status", properties: { sessionID: "parent", status: { type: "busy" } } }))
+    expect(test.completed).not.toHaveBeenCalled()
     test.event(event({ type: "session.turn.close", properties: { sessionID: "parent", reason: "completed" } }))
 
     expect(test.sounds).toEqual(["done"])
@@ -112,6 +116,8 @@ describe("AttentionService", () => {
     test.event(event({ type: "session.status", properties: { sessionID: "s1", status: { type: "idle" } } }))
 
     expect(test.sounds).toEqual(["error"])
+    test.event(event({ type: "session.turn.close", properties: { sessionID: "s1", reason: "completed" } }))
+    expect(test.completed).not.toHaveBeenCalled()
     test.service.dispose()
   })
 
@@ -121,6 +127,7 @@ describe("AttentionService", () => {
     test.event(event({ type: "session.status", properties: { sessionID: "s1", status: { type: "idle" } } }))
     test.event(event({ type: "session.turn.close", properties: { sessionID: "s1", reason: "interrupted" } }))
 
+    expect(test.completed).not.toHaveBeenCalled()
     expect(test.sounds).toEqual([])
     test.service.dispose()
   })

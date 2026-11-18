@@ -17,6 +17,7 @@ import { ensureBackendForAutocomplete } from "./services/autocomplete/ensure-bac
 import { AutocompleteServiceManager } from "./services/autocomplete/AutocompleteServiceManager"
 import { configFeatures } from "./features"
 import { AttentionService } from "./services/attention"
+import { cliInvitationAction, cliInvitationUrl, createCliInvitation } from "./services/cli-invitation"
 import { BrowserAutomationService } from "./services/browser-automation"
 import { TelemetryEventName, TelemetryProxy } from "./services/telemetry"
 import { registerCommitMessageService } from "./services/commit-message"
@@ -178,7 +179,19 @@ export function activate(context: vscode.ExtensionContext) {
       return [...dirs]
     },
   )
+  const inviteToCli = createCliInvitation(
+    context.globalStorageUri.fsPath,
+    () =>
+      vscode.window.showInformationMessage(
+        "Эту задачу можно выполнить и в терминале Клёпы.",
+        cliInvitationAction,
+        "Закрыть",
+      ),
+    () => vscode.env.openExternal(vscode.Uri.parse(cliInvitationUrl)),
+  )
   const attention = new AttentionService(connectionService, {
+    completed: () =>
+      void inviteToCli().catch((error) => console.warn("[Klepa] Не удалось открыть предложение CLI", error)),
     approve: (event, directory) => autoApprove.approve(event, directory),
   })
 
