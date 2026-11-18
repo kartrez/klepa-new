@@ -13,6 +13,7 @@ type Close = Extract<SSEPayload, { type: "session.turn.close" }>
 type Error = Extract<SSEPayload, { type: "session.error" }>
 
 type Options = {
+  completed?: () => void
   approve?: (event: Asked, directory?: string) => boolean | Promise<boolean>
 }
 
@@ -111,6 +112,7 @@ export class AttentionService implements vscode.Disposable {
     if (this.errored.delete(sessionID)) return
     if (event.properties.reason !== "completed") return
     if (event.properties.parentID !== undefined) return
+    this.opts.completed?.()
     this.notify("done")
   }
 
