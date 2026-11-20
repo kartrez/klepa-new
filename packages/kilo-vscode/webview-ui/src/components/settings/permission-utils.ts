@@ -9,6 +9,7 @@ export const DEFAULT_RULES: PermissionRuleItem[] = [
   { permission: "*", pattern: "*", action: "allow" },
   { permission: "external_directory", pattern: "*", action: "ask" },
   { permission: "bash", pattern: "*", action: "ask" },
+  { permission: "browser_open", pattern: "*", action: "ask" },
   { permission: "doom_loop", pattern: "*", action: "ask" },
 ]
 
@@ -26,6 +27,14 @@ export function effectiveRuleLevel(rules: PermissionRuleItem[] | undefined, tool
     if (item.pattern === "*" && matchTool(tool, item.permission)) return item.action
   }
   return "ask"
+}
+
+export function effectiveConfigLevel(
+  config: PermissionConfig,
+  tool: string,
+  defaults: PermissionRuleItem[] = DEFAULT_RULES,
+): PermissionLevel {
+  return effectiveRuleLevel([...defaults, ...ruleset(config)], tool)
 }
 
 export function ruleset(config: PermissionConfig): PermissionRuleItem[] {

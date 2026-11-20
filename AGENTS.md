@@ -1,4 +1,4 @@
-# Klepa AI — инструкции для ИИ-агентов
+﻿# Klepa AI — инструкции для ИИ-агентов
 
 ## Границы рабочего пространства
 
@@ -11,7 +11,7 @@
 
 ## Стек
 
-- Bun 1.3 и Turborepo; поле `packageManager` в корневом `package.json` — источник версии Bun
+- Bun 1.4 и Turborepo; поле `packageManager` в корневом `package.json` — источник версии Bun
 - TypeScript; проверка типов через `tsgo` (`bun turbo typecheck`), не через голый `tsc`
 - CLI и агентный рантайм — `packages/opencode/` (форк OpenCode), HTTP + SSE
 - Расширение VS Code/Qoder — `packages/kilo-vscode/`: Node/CJS-хост и Solid.js-webview, сборка esbuild

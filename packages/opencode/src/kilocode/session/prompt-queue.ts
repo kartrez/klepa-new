@@ -34,6 +34,13 @@ export namespace KiloSessionPromptQueue {
   // own message is never in this list. Published via session.queue.changed so
   // remote clients can reconcile "Queued" badges.
   const waiting = new Map<SessionID, MessageID[]>()
+  // Only newer foreground prompts may dismiss questions; background results
+  // still hand off at the next step boundary.
+  const interactive = new Map<MessageID, number>()
+  // Message IDs whose turn handed off to a queued follow-up. The goal runner
+  // reads this to keep an active goal running after a user prompt preempts its
+  // continuation turn instead of settling the goal to paused.
+  const superseded = new Map<SessionID, Set<MessageID>>()
   let seq = 0
 
   /** @internal - test-only helper */
@@ -44,7 +51,8 @@ export namespace KiloSessionPromptQueue {
       dropped.has(sessionID) ||
       latest.has(sessionID) ||
       activeSince.has(sessionID) ||
-      waiting.has(sessionID)
+      waiting.has(sessionID) ||
+      superseded.has(sessionID)
     )
   }
 
@@ -86,6 +94,7 @@ export namespace KiloSessionPromptQueue {
         dropped.delete(sessionID)
         latest.delete(sessionID)
         activeSince.delete(sessionID)
+        superseded.delete(sessionID)
         // Cancel on an idle session still drops any
         // lingering waiting entry, then publishes an empty snapshot.
         publishIfChanged(sessionID, [])
@@ -96,6 +105,7 @@ export namespace KiloSessionPromptQueue {
       publishIfChanged(sessionID, [])
       versions.set(sessionID, version(sessionID) + 1)
       dropped.delete(sessionID)
+      superseded.delete(sessionID)
     })
   }
 
@@ -110,6 +120,26 @@ export namespace KiloSessionPromptQueue {
       dropped.set(sessionID, cancelled)
       return true
     })
+  }
+
+  // Record that the turn owning `target` handed off to a queued follow-up, so a
+  // caller that owns the turn (the goal runner) can resume instead of treating
+  // the handoff as a stop. Keyed by the turn's own message ID, so a later turn
+  // cannot overwrite it.
+  export function markSuperseded(sessionID: SessionID, target: MessageID) {
+    const set = superseded.get(sessionID) ?? new Set<MessageID>()
+    set.add(target)
+    superseded.set(sessionID, set)
+  }
+
+  // Read and clear the superseded markers for the session. Returns whether
+  // `target` was among them. Clearing the whole set bounds stale markers left
+  // by handoffs no owner consumed.
+  export function consumeSuperseded(sessionID: SessionID, target: MessageID) {
+    const set = superseded.get(sessionID)
+    if (!set) return false
+    superseded.delete(sessionID)
+    return set.has(target)
   }
 
   /**
@@ -129,16 +159,23 @@ export namespace KiloSessionPromptQueue {
     return targets.get(sessionID)?.base
   }
 
+  export function owner(sessionID: SessionID, messageID: MessageID) {
+    const target = targets.get(sessionID)
+    return target?.base === messageID || target?.extras.has(messageID) ? target.base : undefined
+  }
+
   /**
    * True when a newer prompt was enqueued after the currently running slot
    * began. runLoop calls this between LLM steps to break out so the next
    * queued prompt can take over without starting another LLM round-trip for
    * the now-superseded turn.
+   * The question guard passes foreground=true so notifications cannot dismiss
+   * questions, including when older foreground prompts are still queued.
    */
-  export function hasFollowup(sessionID: SessionID): boolean {
+  export function hasFollowup(sessionID: SessionID, foreground = false): boolean {
     const l = latest.get(sessionID) ?? 0
     const a = activeSince.get(sessionID) ?? 0
-    return l > a && (waiting.get(sessionID)?.length ?? 0) > 0
+    return l > a && (waiting.get(sessionID)?.some((id) => !foreground || (interactive.get(id) ?? 0) > a) ?? false)
   }
 
   export function scope(sessionID: SessionID, messages: MessageV2.WithParts[]) {
@@ -183,11 +220,14 @@ export namespace KiloSessionPromptQueue {
     target: MessageID,
     work: Effect.Effect<A, E>,
     cancelled: Effect.Effect<A, E>,
+    reserved: Effect.Effect<void> = Effect.void,
+    foreground = true,
   ): Effect.Effect<A, E> {
     return Effect.acquireUseRelease(
       Effect.sync(() => {
         const mine = ++seq
         latest.set(sessionID, mine)
+        if (foreground) interactive.set(target, mine)
         // Record whether this slot starts immediately
         // (no existing tail) so we can publish the queue change exactly once
         // on the transition that actually mutates the waiting list.
@@ -205,7 +245,8 @@ export namespace KiloSessionPromptQueue {
         return { seq: mine, version: version(sessionID), target, previous, done, tail } satisfies Slot
       }),
       (slot) =>
-        Effect.promise(() => settle(slot.previous)).pipe(
+        reserved.pipe(
+          Effect.andThen(Effect.promise(() => settle(slot.previous))),
           Effect.flatMap(() => {
             if (isCancelled(sessionID, slot)) return cancelled
             // Snapshot the latest seq at the moment this slot actually starts
@@ -237,6 +278,7 @@ export namespace KiloSessionPromptQueue {
         ),
       (slot) =>
         Effect.sync(() => {
+          interactive.delete(target)
           slot.done.resolve()
           if (tails.get(sessionID) !== slot.tail) return
           tails.delete(sessionID)
@@ -245,6 +287,7 @@ export namespace KiloSessionPromptQueue {
           dropped.delete(sessionID)
           latest.delete(sessionID)
           activeSince.delete(sessionID)
+          superseded.delete(sessionID)
           // Last slot of the session finished cleanly;
           // drop any lingering waiting entry and clear internal state.
           waiting.delete(sessionID)

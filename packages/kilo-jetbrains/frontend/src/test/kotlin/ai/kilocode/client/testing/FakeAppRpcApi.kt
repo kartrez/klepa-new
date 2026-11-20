@@ -9,6 +9,8 @@ import ai.kilocode.rpc.dto.DeviceAuthDto
 import ai.kilocode.rpc.dto.HealthDto
 import ai.kilocode.rpc.dto.KiloAppStateDto
 import ai.kilocode.rpc.dto.KiloAppStatusDto
+import ai.kilocode.rpc.dto.LogConfigDto
+import ai.kilocode.rpc.dto.LogFileDto
 import ai.kilocode.rpc.dto.ModelFavoriteUpdateDto
 import ai.kilocode.rpc.dto.ModelSelectionDto
 import ai.kilocode.rpc.dto.ModelSelectionUpdateDto
@@ -17,12 +19,19 @@ import ai.kilocode.rpc.dto.ModelVariantUpdateDto
 import ai.kilocode.rpc.dto.PermissionConfigDto
 import ai.kilocode.rpc.dto.PermissionRuleDto
 import ai.kilocode.rpc.dto.ProfileDto
+import ai.kilocode.rpc.dto.RetentionConfigDto
+import ai.kilocode.rpc.dto.RetentionStatusDto
 import ai.kilocode.rpc.dto.SkillsConfigDto
+import ai.kilocode.rpc.dto.SpeechModelDto
+import ai.kilocode.rpc.dto.SpeechRequestDto
+import ai.kilocode.rpc.dto.SpeechResultDto
 import ai.kilocode.rpc.dto.TelemetryCaptureDto
 import ai.kilocode.rpc.dto.WatcherConfigDto
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Fake [KiloAppRpcApi] for testing.
@@ -37,6 +46,7 @@ class FakeAppRpcApi : KiloAppRpcApi {
     var health = HealthDto(healthy = true, version = "1.0.0")
     var cliVersion = "1.0.0"
     var cliPlatform = "darwin-arm64"
+    var cliBundled = false
     var cliInfoGate: CompletableDeferred<Unit>? = null
     var cliInfoError: Exception? = null
     var cliVersionCalls = 0
@@ -48,12 +58,23 @@ class FakeAppRpcApi : KiloAppRpcApi {
     val cleared = mutableListOf<String>()
     val variants = mutableListOf<ModelVariantUpdateDto>()
     val configPatches = mutableListOf<ConfigPatchDto>()
+    var retention = RetentionStatusDto()
+    val retentionStatusCalls = AtomicInteger()
+    val retentionForces = CopyOnWriteArrayList<Boolean>()
+    var retentionError: Exception? = null
+    val logConfigs = mutableListOf<LogConfigDto>()
     var configUpdateAttempts = 0
         private set
     var configUpdateGate: CompletableDeferred<Unit>? = null
     var configUpdateError: Exception? = null
     var configUpdateReturnStale = false
     var afterConfig: (suspend (ConfigPatchDto) -> Unit)? = null
+    var speechModels = listOf(SpeechModelDto("openai/whisper-1", "Whisper"))
+    var speechModelsError: Exception? = null
+    var speechModelCalls = 0
+    var speechResult = SpeechResultDto("transcript")
+    val speechDirectories = mutableListOf<String?>()
+    val speechRequests = mutableListOf<SpeechRequestDto>()
 
     var connected = false
         private set
@@ -79,6 +100,21 @@ class FakeAppRpcApi : KiloAppRpcApi {
         return health
     }
 
+    override suspend fun transcriptionModels(directory: String?): List<SpeechModelDto> {
+        assertNotEdt("transcriptionModels")
+        speechModelCalls++
+        speechModelsError?.let { throw it }
+        speechDirectories.add(directory)
+        return speechModels
+    }
+
+    override suspend fun transcribe(directory: String?, request: SpeechRequestDto): SpeechResultDto {
+        assertNotEdt("transcribe")
+        speechDirectories.add(directory)
+        speechRequests.add(request)
+        return speechResult
+    }
+
     override suspend fun cliVersion(): String {
         assertNotEdt("cliVersion")
         cliVersionCalls += 1
@@ -92,6 +128,11 @@ class FakeAppRpcApi : KiloAppRpcApi {
         cliPlatformCalls += 1
         cliInfoError?.let { throw it }
         return cliPlatform
+    }
+
+    override suspend fun cliBundled(): Boolean {
+        assertNotEdt("cliBundled")
+        return cliBundled
     }
 
     override suspend fun retry() {
@@ -165,6 +206,78 @@ class FakeAppRpcApi : KiloAppRpcApi {
         return next
     }
 
+    var telemetryLevels = mutableListOf<Boolean>()
+    var telemetryLevelGate: CompletableDeferred<Unit>? = null
+    var telemetryLevelError: Throwable? = null
+    var telemetryAllowed = true
+    var telemetryLevelAttempts = 0
+        private set
+
+    override suspend fun setTelemetryLevel(enabled: Boolean): KiloAppStateDto {
+        assertNotEdt("setTelemetryLevel")
+        telemetryLevelAttempts += 1
+        telemetryLevelGate?.await()
+        telemetryLevelError?.let { throw it }
+        telemetryLevels.add(enabled)
+        val current = state.value
+        val next = current.copy(config = (current.config ?: ConfigDto()).copy(telemetry = enabled && telemetryAllowed))
+        state.value = next
+        return next
+    }
+
+    override suspend fun retentionStatus(): RetentionStatusDto {
+        assertNotEdt("retentionStatus")
+        retentionStatusCalls.incrementAndGet()
+        retentionError?.let { throw it }
+        return retention
+    }
+
+    override suspend fun runRetention(force: Boolean): RetentionStatusDto {
+        assertNotEdt("runRetention")
+        retentionError?.let { throw it }
+        retentionForces.add(force)
+        return retention
+    }
+
+    override suspend fun applyLogConfig(config: LogConfigDto) {
+        assertNotEdt("applyLogConfig")
+        logConfigs.add(config)
+    }
+
+    var indexWorktrees = false
+    val indexWorktreesSaves = mutableListOf<Boolean>()
+
+    /** When set, [indexWorktrees] awaits this deferred, emulating a slow split-mode fetch. */
+    var indexWorktreesGate: CompletableDeferred<Unit>? = null
+
+    /** When set, [setIndexWorktrees] awaits this deferred before recording the save. */
+    var indexWorktreesSaveGate: CompletableDeferred<Unit>? = null
+
+    /** Incremented as soon as [setIndexWorktrees] is entered, before it awaits any gate. */
+    var indexWorktreesSaveAttempts = 0
+        private set
+
+    override suspend fun indexWorktrees(): Boolean {
+        assertNotEdt("indexWorktrees")
+        indexWorktreesGate?.await()
+        return indexWorktrees
+    }
+
+    override suspend fun setIndexWorktrees(value: Boolean) {
+        assertNotEdt("setIndexWorktrees")
+        indexWorktreesSaveAttempts += 1
+        indexWorktreesSaveGate?.await()
+        indexWorktrees = value
+        indexWorktreesSaves.add(value)
+    }
+
+    var backendLog: LogFileDto? = null
+
+    override suspend fun backendLogFile(): LogFileDto? {
+        assertNotEdt("backendLogFile")
+        return backendLog
+    }
+
     private fun applyPatch(config: ConfigDto, patch: ConfigPatchDto): ConfigDto {
         val values = patch.values
         val agents = patch.agents.entries.fold(config.agent) { acc, (name, item) ->
@@ -233,6 +346,15 @@ class FakeAppRpcApi : KiloAppRpcApi {
             mcp = mcp,
             agent = agents,
             permission = mergePermission(config.permission, patch.permission),
+            shared_agent_board = patch.shared_agent_board ?: config.shared_agent_board,
+            snapshot = patch.snapshot ?: config.snapshot,
+            retention = patch.retention?.let { item ->
+                val current = config.retention ?: RetentionConfigDto()
+                current.copy(
+                    enabled = item.enabled ?: current.enabled,
+                    maxAgeDays = item.maxAgeDays ?: current.maxAgeDays,
+                )
+            } ?: config.retention,
         )
     }
 

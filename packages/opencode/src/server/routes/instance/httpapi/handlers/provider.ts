@@ -5,6 +5,10 @@ import { Provider } from "@/provider/provider"
 
 import { mapValues, pickBy } from "remeda" // kilocode_change
 import { ModelCache } from "@/provider/model-cache" // kilocode_change
+import { Auth } from "@/auth" // kilocode_change
+import { organization, recommend } from "@/kilocode/provider/catalog" // kilocode_change
+import { ModelV2 } from "@opencode-ai/core/model" // kilocode_change
+import { Option } from "effect" // kilocode_change
 import {
   disposeAllInstancesAfterProviderAuthCallback,
   invalidatePresence,
@@ -45,6 +49,7 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
     const provider = yield* Provider.Service
     const svc = yield* ProviderAuth.Service
     const cache = yield* ModelCache.Service // kilocode_change
+    const access = yield* Auth.Service // kilocode_change
 
     const list = Effect.fn("ProviderHttpApi.list")(function* () {
       const config = yield* cfg.get()
@@ -57,6 +62,9 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
       }
       const connected = yield* provider.list()
       // kilocode_change start
+      const info = yield* access.get("kilo").pipe(Effect.option)
+      const unavailable = Option.isNone(info) && ("kilo" in filtered || "kilo" in connected)
+      if (Option.isNone(info) || organization(config.provider?.kilo?.options, info.value)) delete filtered.kilo
       const providers = filterPromptTrainingModels(
         Object.assign(
           mapValues(filtered, (item) => Provider.fromModelsDevProvider(item)),
@@ -70,18 +78,63 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
       // Note: connected only contains providers with non-empty models after Provider.Service.list(),
       // so failed must be checked explicitly for providers whose fetch returned an error.
       const failedSet = new Set(failed)
+      if (unavailable) failedSet.add("kilo")
       const validProviders = pickBy(
         providers,
         (item, id) => Object.keys(item.models).length > 0 || id in connected || failedSet.has(id),
       )
+      // A failed provider can be entirely absent from `providers` (e.g. an org-scoped Kilo
+      // catalog is deleted above at `delete filtered.kilo`, and `Provider.Service.list()` drops
+      // zero-model entries). `pickBy` only filters existing keys, so without this, `failedSet`
+      // has no row left to attach a reason to — the client gets `failed: ["kilo"]` but no entry
+      // in `all` to render it against. Synthesize a models-less placeholder instead, only for
+      // providers not excluded by config; it is never sourced from the raw catalog, so the
+      // public models.dev model list cannot leak through it.
+      for (const id of failedSet) {
+        if (id in validProviders || !((enabled ? enabled.has(id) : true) && !disabled.has(id))) continue
+        validProviders[id] = {
+          id: ProviderV2.ID.make(id),
+          name: all[id]?.name ?? id,
+          source: "api",
+          env: [],
+          options: {},
+          models: {},
+        }
+      }
+      const failures: Provider.Failure[] = []
+      for (const id of failedSet) {
+        const failure = yield* cache.getFailure(id)
+        if (!failure && id === "kilo" && unavailable) {
+          failures.push({ providerID: id, kind: "unauthenticated" })
+          continue
+        }
+        failures.push({
+          providerID: id,
+          kind: failure?.kind ?? "http",
+          ...(failure?.status == null ? {} : { status: failure.status }),
+        })
+      }
+      const defaults = Provider.defaultModelIDs(pickBy(validProviders, (item) => Object.keys(item.models).length > 0))
+      if (connected[ProviderV2.ID.kilo] && defaults[ProviderV2.ID.kilo]) {
+        const model = yield* Effect.promise(() =>
+          recommend(
+            validProviders.kilo.models,
+            config.provider?.kilo?.options,
+            Option.getOrUndefined(info),
+            Option.isSome(info),
+          ),
+        )
+        if (model) defaults[ProviderV2.ID.kilo] = ModelV2.ID.make(model)
+      }
       return {
         all: Object.values(validProviders).map((item) => ({
           ...Provider.toPublicInfo(item),
           metadata: providerMetadata(item.id),
         })), // kilocode_change
-        default: Provider.defaultModelIDs(pickBy(validProviders, (item) => Object.keys(item.models).length > 0)),
+        default: defaults,
         connected: Object.keys(connected),
-        failed,
+        failed: [...failedSet],
+        failures,
       }
       // kilocode_change end
     })

@@ -1,4 +1,6 @@
 import { hasIndexingPlugin } from "@kilocode/kilo-indexing/detect"
+import type { KiloClient } from "@kilocode/sdk/v2"
+import * as vscode from "vscode"
 
 type PluginSpec = string | [string, Record<string, unknown>]
 
@@ -10,13 +12,32 @@ export type Features = {
   indexing: boolean
   sandboxControls: boolean
   autocomplete: boolean
+  backgroundSubagents: boolean
+  speechToText: boolean
 }
 
-export function configFeatures(config?: ConfigLike | null): Features {
+export function configFeatures(
+  config?: ConfigLike | null,
+  backgroundSubagents = false,
+  remote = !!vscode.env.remoteName,
+): Features {
   return {
     indexing: hasIndexingPlugin(config?.plugin ?? []),
     sandboxControls: process.platform !== "win32",
     // Klepa chat API has no FIM endpoint; inline autocomplete needs Codestral/Mercury via Kilo Gateway.
     autocomplete: false,
+    backgroundSubagents,
+    speechToText: !remote,
+  }
+}
+
+export async function serverFeatures(client: Pick<KiloClient, "experimental">, dir: string) {
+  if (!client.experimental?.capabilities?.get) return false
+  try {
+    const { data } = await client.experimental.capabilities.get({ directory: dir }, { throwOnError: true })
+    return data?.backgroundSubagents === true
+  } catch (error) {
+    console.warn("[Kilo New] Failed to fetch server capabilities:", error)
+    return false
   }
 }

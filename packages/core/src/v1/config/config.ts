@@ -18,7 +18,10 @@ import { ConfigServerV1 } from "./server"
 import { ConfigSkillsV1 } from "./skills"
 // kilocode_change start
 import { ZodOverride } from "../../effect-zod"
-import { IndexingConfig as KiloIndexingConfig, IndexingSchema as KiloIndexingSchema } from "@kilocode/kilo-indexing/config"
+import {
+  IndexingConfig as KiloIndexingConfig,
+  IndexingSchema as KiloIndexingSchema,
+} from "@kilocode/kilo-indexing/config"
 import z from "zod"
 // kilocode_change end
 
@@ -78,6 +81,21 @@ export const Info = Schema.Struct({
     description:
       "Enable or disable snapshot tracking. When false, filesystem snapshots are not recorded and undoing or reverting will not undo/redo file changes. Defaults to true.",
   }),
+  // kilocode_change start - machine-wide session retention policy, owned by the backend
+  retention: Schema.optional(
+    Schema.Struct({
+      enabled: Schema.optional(Schema.Boolean).annotate({
+        description:
+          "Enable automatic deletion of old sessions across all projects and every Kilo client on this machine. Defaults to false; deletion is permanent.",
+      }),
+      maxAgeDays: Schema.optional(Schema.Number).annotate({
+        description: "Days a session is kept before retention deletes it. Defaults to 30, minimum 1.",
+      }),
+    }),
+  ).annotate({
+    description: "Machine-wide session retention. Evaluated by the backend; clients only trigger runs.",
+  }),
+  // kilocode_change end
   plugin: Schema.optional(Schema.mutable(Schema.Array(ConfigPluginV1.Spec))),
   share: Schema.optional(Schema.Literals(["manual", "auto", "disabled"])).annotate({
     description:
@@ -104,7 +122,14 @@ export const Info = Schema.Struct({
     description: "Enable remote control of sessions via Kilo Cloud. Equivalent to running /remote on startup.",
   }),
   auto_collapse_reasoning: Schema.optional(Schema.Boolean).annotate({
-    description: "Automatically collapse reasoning blocks after the agent finishes writing them",
+    description:
+      "@deprecated Use 'reasoning_display' field instead. Automatically collapse reasoning blocks after the agent finishes writing them",
+  }),
+  reasoning_display: Schema.optional(Schema.Literals(["expanded", "preview", "headline"])).annotate({
+    description: "Controls how reasoning blocks are displayed in the VS Code chat UI",
+  }),
+  shared_agent_board: Schema.optional(Schema.Boolean).annotate({
+    description: "Share a board between a main session and its task subagents, including nested subagents",
   }),
   indexing: Schema.optional(IndexingRef).annotate({ description: "Codebase indexing configuration" }),
   console: Schema.optional(
@@ -126,8 +151,16 @@ export const Info = Schema.Struct({
     description:
       "Controls whether code edit and diff blocks are expanded or collapsed by default in the VS Code chat UI",
   }),
+  mcp_tool_display: Schema.optional(Schema.Literals(["expanded", "collapsed"])).annotate({
+    description:
+      "Controls whether MCP and generic tool blocks are expanded or collapsed by default in the VS Code chat UI",
+  }),
   hide_prompt_training_models: Schema.optional(Schema.Boolean).annotate({
     description: "Hide Kilo Gateway models that may train on your prompts from model listings",
+  }),
+  privacy_mode: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "Blur personally identifiable information (account email, balance, team name, etc.) in the TUI and require confirmation before showing profile details",
   }),
   sandbox: Schema.optional(
     Schema.Struct({
@@ -170,11 +203,18 @@ export const Info = Schema.Struct({
     description:
       "Model-specific variant overrides for task-tool subagents, keyed by provider/model. Valid overrides take precedence over saved, agent-specific, and inherited variants.",
   }),
+  memory_model: Schema.optional(Schema.NullOr(Schema.String)).annotate({
+    description:
+      "Model for automatic project memory saves in the format of provider/model. If unset or unavailable, memory uses the session model.",
+  }),
   default_agent: Schema.optional(Schema.NullOr(Schema.String)).annotate({
     description:
       "Default agent to use when none is specified. Must be a primary agent. Falls back to 'code' if not set or if the specified agent is invalid.",
   }),
   // kilocode_change end
+  subagent_depth: Schema.optional(NonNegativeInt).annotate({
+    description: "Maximum subagent nesting depth. Defaults to 1, which prevents subagents from launching subagents.",
+  }),
   username: Schema.optional(Schema.String).annotate({
     description: "Custom username to display in conversations instead of system username",
   }),
@@ -229,6 +269,9 @@ export const Info = Schema.Struct({
   layout: Schema.optional(ConfigLayoutV1.Layout).annotate({ description: "@deprecated Always uses stretch layout." }),
   permission: Schema.optional(ConfigPermissionV1.Info),
   tools: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
+  web_search: Schema.optional(Schema.Boolean).annotate({
+    description: "Make web search available to models from all providers (default: false)",
+  }), // kilocode_change
   attachment: Schema.optional(ConfigAttachmentV1.Info).annotate({
     description: "Attachment processing configuration, including image size limits and resizing behavior",
   }),
@@ -264,8 +307,9 @@ export const Info = Schema.Struct({
         description: "Enable pruning of old tool outputs (default: true)",
       }),
       tail_turns: Schema.optional(NonNegativeInt).annotate({
+        // kilocode_change - Kilo pins an unset tail_turns to 2 turns, so the description must state the cap
         description:
-          "Number of recent user turns, including their following assistant/tool responses, to keep verbatim during compaction (default: 2)",
+          "Maximum number of recent user turns, including their following assistant/tool responses, to keep verbatim during compaction. By default at most 2 turns are kept, further limited by the preserved token budget.", // kilocode_change
       }),
       preserve_recent_tokens: Schema.optional(NonNegativeInt).annotate({
         description: "Maximum number of tokens from recent turns to preserve verbatim after compaction",
@@ -280,19 +324,30 @@ export const Info = Schema.Struct({
       disable_paste_summary: Schema.optional(Schema.Boolean),
       batch_tool: Schema.optional(Schema.Boolean).annotate({ description: "Enable the batch tool" }),
       // kilocode_change start
-      codebase_search: Schema.optional(Schema.Boolean).annotate({ description: "Enable AI-powered codebase search" }),
       image_generation: Schema.Boolean.pipe(Schema.optional, Schema.withDecodingDefault(Effect.succeed(true))).annotate({ description: "Enable AI image generation" }),
       image_generation_model: Schema.optional(Schema.String).annotate({
         description: "Model ID to use for image generation (default: google/gemini-2.5-flash-image)",
       }),
-      agent_requirements: Schema.optional(Schema.Boolean).annotate({
-        description: "Require declared agent skills, MCPs, and VS Code extensions before VS Code prompts can run",
-      }),
       native_notebook_tools: Schema.optional(Schema.Boolean).annotate({
         description: "Enable native tools for reading, editing, and executing VS Code notebooks",
       }),
+      glob_include_ignored: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
+        description:
+          "Folders or files, as gitignore-style patterns relative to the workspace root, that the glob tool should search even when they are ignored (for example by .gitignore) or hidden. Patterns without a slash match folders at any depth; list a file inside an ignored folder by its path (for example build/report.json). Ignored or hidden folders nested inside a listed folder stay skipped.",
+      }),
+      code_mode: Schema.optional(Schema.Boolean).annotate({
+        description:
+          "Route MCP tool calls through a confined JavaScript runtime with on-demand tool discovery instead of exposing every MCP tool directly",
+      }),
       speech_to_text_model: Schema.optional(Schema.String).annotate({
         description: "Speech-to-text transcription model ID to use for voice input",
+      }),
+      speech_to_text_base_url: Schema.optional(Schema.String).annotate({
+        description:
+          "Base URL of an OpenAI-compatible transcription API to use instead of the Kilo Gateway, for example https://api.openai.com/v1",
+      }),
+      speech_to_text_api_key: Schema.optional(Schema.String).annotate({
+        description: "API key sent as a bearer token to the custom speech-to-text base URL",
       }),
       openTelemetry: Schema.Boolean.pipe(Schema.optional, Schema.withDecodingDefault(Effect.succeed(true))).annotate({
         description: "Enable telemetry. Set to false to opt-out.",
@@ -316,14 +371,6 @@ export const Info = Schema.Struct({
       sandbox_writable_paths: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
         description:
           "Additional filesystem paths the sandbox allows writes to (e.g. ['/tmp', '/var/log']). These are merged with the default writable paths when the sandbox is active.",
-      }),
-      swe_pruner: Schema.Boolean.pipe(Schema.optional, Schema.withDecodingDefault(Effect.succeed(true))).annotate({
-        description:
-          "Enable SWE-Pruner: task-aware pruning of large read, grep, and bash tool outputs guided by a focus question provided by the agent (default: true)",
-      }),
-      swe_pruner_model: Schema.String.pipe(Schema.optional, Schema.withDecodingDefault(Effect.succeed("klepa/google/gemma-4"))).annotate({
-        description:
-          'Model used by SWE-Pruner to skim tool outputs, in "provider/model" format (default: klepa/google/gemma-4)',
       }),
       // kilocode_change end
       mcp_timeout: Schema.optional(PositiveInt).annotate({

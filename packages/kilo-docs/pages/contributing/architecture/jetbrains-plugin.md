@@ -138,6 +138,10 @@ JetBrains Kotlin toolchain is Java 21. Gradle commands report missing or incompa
 
 Run `Plugin DevKit | Code | Frontend and Backend API Usage` inspection when moving code across split boundary.
 
+## Icon skill
+
+For plugin icon creation, modification, or review, use the `icon-jetbrains` skill at `.kilo/skills/icon-jetbrains/SKILL.md` together with `packages/kilo-jetbrains/AGENTS.md`. The skill covers IntelliJ New UI SVG roles, sizing, palette, dark variants, and icon validation guidance.
+
 ## Source map
 
 Paths below are relative to [`Kilo-Org/kilocode`](https://github.com/Kilo-Org/kilocode).
@@ -145,7 +149,7 @@ Paths below are relative to [`Kilo-Org/kilocode`](https://github.com/Kilo-Org/ki
 | Concern | Source path |
 |---|---|
 | Split modules | `packages/kilo-jetbrains/settings.gradle.kts` and module XML descriptors |
-| Contributor constraints | `packages/kilo-jetbrains/AGENTS.md` |
+| Contributor constraints | `packages/kilo-jetbrains/AGENTS.md` and the `jetbrains-ui`/`jetbrains-session`/`jetbrains-arch`/`jetbrains-dev` skills under `.kilo/skills/` |
 | CLI lifecycle | `packages/kilo-jetbrains/backend/src/main/kotlin/ai/kilocode/backend/cli/KiloBackendCliManager.kt` |
 | Connection recovery | `packages/kilo-jetbrains/backend/src/main/kotlin/ai/kilocode/backend/app/KiloBackendConnectionService.kt` |
 | Workspace cache | `packages/kilo-jetbrains/backend/src/main/kotlin/ai/kilocode/backend/workspace/KiloBackendWorkspaceManager.kt` |

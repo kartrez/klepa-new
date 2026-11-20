@@ -9,6 +9,7 @@ import { ModelSelectorBase } from "../shared/ModelSelector"
 import { ThinkingSelectorBase } from "../shared/ThinkingSelector"
 import SettingsRow from "./SettingsRow"
 import { AUTOCOMPLETE_SELECTOR_MODELS, getAutocompleteSelection } from "./autocomplete-model-selector"
+import { preserveVariant } from "../../context/session-variant-store"
 
 const ModelsTab: Component = () => {
   const { config, settings, updateConfig, updateSetting, features } = useConfig()
@@ -52,9 +53,12 @@ const ModelsTab: Component = () => {
       return
     }
     const value = `${providerID}/${modelID}`
+    const list = Object.keys(provider.findModel({ providerID, modelID })?.variants ?? {})
+    const next = preserveVariant(subagentVariant(), list)
     updateConfig({
       subagent_model: value,
       ...(config().subagent_model === value ? {} : { subagent_variant: null }),
+      ...(next ? { subagent_variant_overrides: { ...config().subagent_variant_overrides, [value]: next } } : {}),
     })
   }
 
@@ -75,7 +79,17 @@ const ModelsTab: Component = () => {
         updateConfig({ agent: { [agentName]: { model: null } } })
         return
       }
-      updateConfig({ agent: { [agentName]: { model: `${providerID}/${modelID}` } } })
+      const current = config().agent?.[agentName]?.variant ?? undefined
+      const list = Object.keys(provider.findModel({ providerID, modelID })?.variants ?? {})
+      const next = preserveVariant(current, list)
+      updateConfig({
+        agent: {
+          [agentName]: {
+            model: `${providerID}/${modelID}`,
+            ...(current && !list.includes(current) ? { variant: next ?? null } : {}),
+          },
+        },
+      })
     }
   }
 
@@ -126,7 +140,6 @@ const ModelsTab: Component = () => {
         <SettingsRow
           title={language.t("settings.providers.subagentModel.title")}
           description={language.t("settings.providers.subagentModel.description")}
-          last={!features().autocomplete}
         >
           <div style={{ display: "flex", "flex-direction": "column", "align-items": "flex-end", gap: "8px" }}>
             <ModelSelectorBase
@@ -151,6 +164,25 @@ const ModelsTab: Component = () => {
               />
             </Show>
           </div>
+        </SettingsRow>
+        <SettingsRow
+          title={language.t("settings.context.compactionModel.title")}
+          description={language.t("settings.context.compactionModel.description")}
+          last={!features().autocomplete}
+        >
+          <ModelSelectorBase
+            value={parseModelString(config().agent?.compaction?.model ?? undefined)}
+            onSelect={(providerID, modelID) =>
+              updateConfig({
+                agent: { compaction: { model: providerID && modelID ? `${providerID}/${modelID}` : null } },
+              })
+            }
+            placement="bottom-start"
+            allowClear
+            clearLabel={language.t("settings.context.compactionModel.useChatModel")}
+            label={language.t("settings.context.compactionModel.title")}
+            description={language.t("settings.context.compactionModel.description")}
+          />
         </SettingsRow>
         <Show when={features().autocomplete}>
           <SettingsRow

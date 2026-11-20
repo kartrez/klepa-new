@@ -2,7 +2,10 @@ package ai.kilocode.rpc
 
 import ai.kilocode.rpc.dto.AgentDetailDto
 import ai.kilocode.rpc.dto.AgentCreateDto
+import ai.kilocode.rpc.dto.CommandFileDto
 import ai.kilocode.rpc.dto.CommandDto
+import ai.kilocode.rpc.dto.McpAuthEventDto
+import ai.kilocode.rpc.dto.McpAuthResultDto
 import ai.kilocode.rpc.dto.McpConfigDto
 import ai.kilocode.rpc.dto.McpServerConfigDto
 import ai.kilocode.rpc.dto.McpStatusDto
@@ -11,6 +14,7 @@ import com.intellij.platform.rpc.RemoteApiProviderService
 import fleet.rpc.RemoteApi
 import fleet.rpc.Rpc
 import fleet.rpc.remoteApiDescriptor
+import kotlinx.coroutines.flow.Flow
 
 @Rpc
 interface KiloAgentBehaviorRpcApi : RemoteApi<Unit> {
@@ -38,6 +42,14 @@ interface KiloAgentBehaviorRpcApi : RemoteApi<Unit> {
 
     suspend fun commands(directory: String): List<CommandDto>
 
+    suspend fun commandFiles(directory: String): List<CommandFileDto>
+
+    suspend fun removeCommand(directory: String, location: String): Boolean
+
+    suspend fun reloadCommands(directory: String): Boolean
+
+    suspend fun saveCommands(directory: String, edits: Map<String, String>): Boolean
+
     suspend fun mcpStatus(directory: String): List<McpStatusDto>
 
     suspend fun mcpConfig(directory: String): Map<String, McpServerConfigDto>
@@ -48,7 +60,14 @@ interface KiloAgentBehaviorRpcApi : RemoteApi<Unit> {
 
     suspend fun mcpDisconnect(directory: String, name: String): Boolean
 
-    suspend fun mcpAuthenticate(directory: String, name: String): Boolean
+    suspend fun mcpAuthenticate(directory: String, name: String): McpAuthResultDto
+
+    /** Cancels an in-flight sign-in, leaving any stored credentials in place. */
+    suspend fun mcpAuthCancel(directory: String, name: String): Boolean
+
+    suspend fun mcpAuthRemove(directory: String, name: String): Boolean
+
+    suspend fun mcpAuthEvents(): Flow<McpAuthEventDto>
 
     suspend fun claudeCodeCompat(): Boolean
 

@@ -3,7 +3,6 @@ package ai.kilocode.client.session.ui.model
 import ai.kilocode.client.plugin.KiloBundle
 import ai.kilocode.client.ui.PickerButton
 import ai.kilocode.client.ui.picker.PickerPopup
-import ai.kilocode.client.ui.picker.popupBackground
 import ai.kilocode.rpc.dto.ModelAutoRoutingDto
 import ai.kilocode.rpc.dto.ModelCapabilitiesDto
 import ai.kilocode.rpc.dto.ModelCostDto
@@ -12,18 +11,11 @@ import ai.kilocode.rpc.dto.ModelOptionsDto
 import ai.kilocode.rpc.dto.ModelSelectionDto
 import ai.kilocode.rpc.dto.ModelTerminalBenchDto
 import com.intellij.ide.util.PropertiesComponent
-import com.intellij.ui.CollectionListModel
 import com.intellij.util.ui.JBUI
-import com.intellij.xml.util.XmlStringUtil
 import java.awt.Cursor
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.SwingConstants
-
-private const val MODEL_PICKER_MIN_WIDTH = 420
-private const val MODEL_PICKER_MAX_WIDTH = 760
-private const val MODEL_PICKER_MAX_VISIBLE_ROWS = 10
-private const val MODEL_PICKER_EMPTY_LIST_HEIGHT = 120
 
 class ModelPicker : PickerButton() {
 
@@ -77,7 +69,7 @@ class ModelPicker : PickerButton() {
     init {
         isEnabled = false
         text = " "
-        toolTipText = KiloBundle.message("model.picker.tooltip")
+        syncTooltip()
 
         addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
@@ -114,7 +106,7 @@ class ModelPicker : PickerButton() {
             isEnabled = allowEmpty
             text = if (allowEmpty) emptyText else " "
             icon = null
-            toolTipText = KiloBundle.message("model.picker.tooltip")
+            syncTooltip()
             cursor = if (allowEmpty) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else Cursor.getDefaultCursor()
             return
         }
@@ -123,9 +115,18 @@ class ModelPicker : PickerButton() {
         icon = if (item?.let(ModelText::collectsData) == true) ModelPickerRenderer.DATA_COLLECTED else null
         horizontalTextPosition = SwingConstants.LEFT
         iconTextGap = JBUI.CurrentTheme.ActionsList.elementIconGap()
-        toolTipText = if (item?.let(ModelText::collectsData) == true) ModelText.dataCollectedTooltip() else KiloBundle.message("model.picker.tooltip")
+        syncTooltip()
         isEnabled = true
         cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+    }
+
+    override fun syncTooltip() {
+        val item = selected ?: if (allowEmpty) null else items.firstOrNull()
+        toolTipText = if (item != null && ModelText.collectsData(item)) {
+            tip(KiloBundle.message("model.picker.tooltip"), KiloBundle.message("model.picker.dataCollected.current"))
+        } else {
+            tip(KiloBundle.message("model.picker.tooltip"))
+        }
     }
 
     fun open() {
@@ -133,82 +134,53 @@ class ModelPicker : PickerButton() {
         showPopup()
     }
 
+    /** Whether [cycle] would move to a different model than the one selected now. */
+    fun canCycle(): Boolean = nextCycleItem() != null
+
+    /** Selects the next model in the Ctrl+2 cycle order (favorites, else recommended), wrapping at the end. */
+    fun cycle() {
+        val next = nextCycleItem() ?: return
+        activate(next)
+    }
+
+    private fun nextCycleItem(): Item? {
+        val pool = modelCycle(items, favorites(), includeSmall)
+        if (pool.isEmpty()) return null
+        val index = pool.indexOfFirst { it.key == selected?.key }
+        val next = pool[(index + 1).mod(pool.size)]
+        return next.takeIf { it.key != selected?.key }
+    }
+
+    private fun activate(item: Item) {
+        selected = item
+        refresh()
+        onSelect(item)
+    }
+
+    private fun clear() {
+        selected = null
+        refresh()
+        onClear()
+    }
+
     private fun showPopup() {
-        val data = CollectionListModel(modelPickerRows(items, favorites(), "", allowEmpty, emptyText, includeSmall))
-        var popup: PickerPopup<ModelPickerRow>? = null
-        val renderer = ModelPickerRenderer(
-            model = data,
-            active = { selected?.key },
-            favorites = { favoriteKeys() },
-        )
-        var refreshFavorite: (Item) -> Unit = {}
-        val details = ModelDetailsPanel(
-            favorites = { favoriteKeys() },
-            toggle = { refreshFavorite(it) },
-        ).apply {
-            background = popupBackground
-        }
-
-        fun activate(item: Item) {
-            selected = item
-            refresh()
-            onSelect(item)
-        }
-
-        fun clear() {
-            selected = null
-            refresh()
-            onClear()
-        }
-
-        fun activate(row: ModelPickerRow) {
-            val item = row.item
-            if (item == null) {
-                clear()
-                return
-            }
-            activate(item)
-        }
-
-        fun toggle(row: ModelPickerRow) {
-            val item = row.item ?: return
-            onFavoriteToggle(item)
-        }
-
-        refreshFavorite = { item ->
-            onFavoriteToggle(item)
-            popup?.refresh(prefer = item.key)
-            popup?.repaint()
-        }
-
-        popup = PickerPopup(
+        restoreFocusOnPick(ModelPopup(
             anchor = this,
+            items = { items },
+            selected = { selected?.key },
+            onSelect = ::activate,
+            onClear = ::clear,
+            favorites = { favorites() },
+            onFavoriteToggle = { onFavoriteToggle(it) },
             placement = when (placement) {
                 Placement.ABOVE -> PickerPopup.Placement.ABOVE
                 Placement.BELOW -> PickerPopup.Placement.BELOW
             },
-            rows = { q -> modelPickerRows(items, favorites(), q, allowEmpty, emptyText, includeSmall) },
-            model = data,
-            renderer = renderer,
-            key = { it.key },
-            mode = PickerPopup.Mode.Single,
-            onPrimary = ::activate,
-            sectionTitle = ::modelPickerSectionTitle,
-            trailingHit = ModelPickerRenderer::isFavoriteClick,
-            onTrailing = ::toggle,
-            search = true,
-            details = details,
-            onPreview = { details.update(it?.item ?: selected) },
-            expandStateKey = MODEL_PICKER_EXPANDED_KEY,
-            minWidth = MODEL_PICKER_MIN_WIDTH,
-            maxWidth = MODEL_PICKER_MAX_WIDTH,
-            maxVisibleRows = MODEL_PICKER_MAX_VISIBLE_ROWS,
-            emptyListHeight = MODEL_PICKER_EMPTY_LIST_HEIGHT,
-        )
-        popup.show()
+            allowEmpty = allowEmpty,
+            emptyText = emptyText,
+            includeSmall = includeSmall,
+        ).show())
     }
-
-    private fun favoriteKeys(): Set<String> = favorites().mapTo(mutableSetOf()) { "${it.providerID}/${it.modelID}" }
 
     internal fun expandedForTest(): Boolean = props.getBoolean(MODEL_PICKER_EXPANDED_KEY, false)
 }
@@ -307,11 +279,6 @@ internal object ModelText {
     fun providerSort(id: String): Int = if (id == "kilo") 0 else 1
 
     fun dataCollected(): String = KiloBundle.message("model.picker.dataCollected")
-
-    fun dataCollectedTooltip(): String = XmlStringUtil.wrapInHtmlLines(
-        KiloBundle.message("model.picker.tooltip"),
-        KiloBundle.message("model.picker.dataCollected.current"),
-    )
 
     fun freeLabel(): String = KiloBundle.message("model.picker.free")
 

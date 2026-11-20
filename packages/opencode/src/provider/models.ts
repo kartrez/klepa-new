@@ -4,6 +4,7 @@ import { ModelCache } from "./model-cache"
 import * as Core from "@opencode-ai/core/models-dev"
 import { Context, Effect, Layer } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder" // kilocode_change
 import { AI_SDK_PROVIDERS, PROMPTS } from "@kilocode/kilo-gateway"
 import {
   GPT_CHAT_BY_API_BASE,
@@ -18,7 +19,9 @@ export type Provider = Core.Provider
 export const CatalogModelStatus = Core.CatalogModelStatus
 export type CatalogModelStatus = Core.CatalogModelStatus
 
-export interface Interface extends Core.Interface {}
+export interface Interface extends Core.Interface {
+  readonly getFailure: ModelCache.Interface["getFailure"]
+}
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ModelsDev") {}
 
@@ -50,17 +53,17 @@ export const layer: Layer.Layer<Service, never, Core.Service | Config.Service | 
       return providers
     })
 
-    return Service.of({ get, refresh: core.refresh })
+    return Service.of({ get, refresh: core.refresh, getFailure: cache.getFailure })
   }),
 )
 
-export const defaultLayer = layer.pipe(
-  Layer.provide(Core.defaultLayer),
-  Layer.provide(Config.defaultLayer),
-  Layer.provide(ModelCache.defaultLayer),
-)
+export const defaultLayer: Layer.Layer<Service> = Layer.suspend(() => AppNodeBuilder.build(node)) // kilocode_change - build from the LayerNode graph
 
-export const node = LayerNode.suspend(() => LayerNode.make(layer, [Core.node, Config.node, ModelCache.node]))
+export const node = LayerNode.make({
+  service: Service,
+  layer,
+  deps: [Core.node, Config.node, ModelCache.node],
+})
 
 export { AI_SDK_PROVIDERS, PROMPTS }
 export * as ModelsDev from "./models"

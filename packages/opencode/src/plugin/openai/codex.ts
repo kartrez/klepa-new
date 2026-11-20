@@ -1,5 +1,6 @@
 import type { Hooks, PluginInput } from "@kilocode/plugin"
 import * as Log from "@opencode-ai/core/util/log" // kilocode_change
+import { escapeHtml } from "@/util/html"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { OAUTH_DUMMY_KEY } from "../../auth"
 import os from "os"
@@ -28,7 +29,7 @@ const ALLOWED_MODELS = new Set([
   // kilocode_change end
 ])
 // kilocode_change start
-const DISALLOWED_MODELS = new Set(["gpt-5.5-pro"])
+const DISALLOWED_MODELS = new Set(["gpt-5.5-pro", "gpt-5.6"])
 // kilocode_change end
 
 interface PkceCodes {
@@ -53,10 +54,12 @@ function base64UrlEncode(buffer: ArrayBuffer): string {
 
 export interface IdTokenClaims {
   chatgpt_account_id?: string
+  chatgpt_compute_residency?: string
   organizations?: Array<{ id: string }>
   email?: string
   "https://api.openai.com/auth"?: {
     chatgpt_account_id?: string
+    chatgpt_compute_residency?: string
   }
 }
 
@@ -89,6 +92,14 @@ export function extractAccountId(tokens: TokenResponse): string | undefined {
     return claims ? extractAccountIdFromClaims(claims) : undefined
   }
   return undefined
+}
+
+export function extractResidency(token: string): string | undefined {
+  const claims = parseJwtClaims(token)
+  const residency =
+    claims?.["https://api.openai.com/auth"]?.chatgpt_compute_residency ?? claims?.chatgpt_compute_residency
+  if (!residency || residency === "no_constraint") return undefined
+  return residency
 }
 
 function buildAuthorizeUrl(redirectUri: string, pkce: PkceCodes, state: string): string {
@@ -157,6 +168,7 @@ async function refreshAccessToken(refreshToken: string, issuer = ISSUER, signal?
   return response.json()
 }
 
+// kilocode_change start - retain Kilo-branded OAuth callback until the shared page supports Kilo branding
 const HTML_SUCCESS = `<!doctype html>
 <html>
   <head>
@@ -203,7 +215,7 @@ const HTML_SUCCESS = `<!doctype html>
   </body>
 </html>`
 
-const HTML_ERROR = (error: string) => `<!doctype html>
+export const renderOAuthError = (error: string) => `<!doctype html>
 <html>
   <head>
     <!-- kilocode_change start -->
@@ -248,10 +260,11 @@ const HTML_ERROR = (error: string) => `<!doctype html>
     <div class="container">
       <h1>Authorization Failed</h1>
       <p>An error occurred during authorization.</p>
-      <div class="error">${error}</div>
+      <div class="error">${escapeHtml(error)}</div>
     </div>
   </body>
 </html>`
+// kilocode_change end
 
 interface PendingOAuth {
   pkce: PkceCodes
@@ -281,8 +294,8 @@ async function startOAuthServer(): Promise<{ port: number; redirectUri: string }
         const errorMsg = errorDescription || error
         pendingOAuth?.reject(new Error(errorMsg))
         pendingOAuth = undefined
-        res.writeHead(200, { "Content-Type": "text/html" })
-        res.end(HTML_ERROR(errorMsg))
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
+        res.end(renderOAuthError(errorMsg))
         return
       }
 
@@ -290,8 +303,8 @@ async function startOAuthServer(): Promise<{ port: number; redirectUri: string }
         const errorMsg = "Missing authorization code"
         pendingOAuth?.reject(new Error(errorMsg))
         pendingOAuth = undefined
-        res.writeHead(400, { "Content-Type": "text/html" })
-        res.end(HTML_ERROR(errorMsg))
+        res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" })
+        res.end(renderOAuthError(errorMsg))
         return
       }
 
@@ -299,8 +312,8 @@ async function startOAuthServer(): Promise<{ port: number; redirectUri: string }
         const errorMsg = "Invalid state - potential CSRF attack"
         pendingOAuth?.reject(new Error(errorMsg))
         pendingOAuth = undefined
-        res.writeHead(400, { "Content-Type": "text/html" })
-        res.end(HTML_ERROR(errorMsg))
+        res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" })
+        res.end(renderOAuthError(errorMsg))
         return
       }
 
@@ -311,8 +324,8 @@ async function startOAuthServer(): Promise<{ port: number; redirectUri: string }
         .then((tokens) => current.resolve(tokens))
         .catch((err) => current.reject(err))
 
-      res.writeHead(200, { "Content-Type": "text/html" })
-      res.end(HTML_SUCCESS)
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
+      res.end(HTML_SUCCESS) // kilocode_change - shared callback page is currently OpenCode-branded
       return
     }
 
@@ -395,10 +408,17 @@ export async function CodexAuthPlugin(input: PluginInput, options: CodexAuthPlug
         return Object.fromEntries(
           Object.entries(provider.models)
             .filter(([, model]) => {
+              if (model.options?.reasoningMode === "pro") return false // kilocode_change - tolerate catalog entries without options
               if (ALLOWED_MODELS.has(model.api.id)) return true
               if (DISALLOWED_MODELS.has(model.api.id)) return false // kilocode_change
-              const match = model.api.id.match(/^gpt-(\d+\.\d+)/)
-              return match ? parseFloat(match[1]) > 5.4 : false
+              if (model.api.id === "gpt-5.6") return false
+              // kilocode_change start - allow integer GPT major versions until the next upstream sync
+              const match = model.api.id.match(/^gpt-(\d+)(?:\.(\d+))?/)
+              if (!match) return false
+              const major = Number(match[1])
+              const minor = Number(match[2] ?? 0)
+              return major > 5 || (major === 5 && minor > 4)
+              // kilocode_change end
             })
             .map(([modelID, model]) => [
               modelID,
@@ -415,7 +435,13 @@ export async function CodexAuthPlugin(input: PluginInput, options: CodexAuthPlug
                       input: 272_000,
                       output: 128_000,
                     }
-                  : model.limit,
+                  : model.id.includes("gpt-5.6")
+                    ? {
+                        context: 1_050_000, // kilocode_change - use the current Codex limits for GPT-5.6 OAuth models
+                        input: 922_000, // kilocode_change
+                        output: 128_000,
+                      }
+                    : model.limit,
               },
             ]),
         )
@@ -511,13 +537,16 @@ export async function CodexAuthPlugin(input: PluginInput, options: CodexAuthPlug
               requestInput instanceof URL
                 ? requestInput
                 : new URL(typeof requestInput === "string" ? requestInput : requestInput.url)
-            const url =
-              parsed.pathname.includes("/v1/responses") || parsed.pathname.includes("/chat/completions")
-                ? new URL(codexApiEndpoint)
-                : parsed
+            const rewrite = parsed.pathname.includes("/v1/responses") || parsed.pathname.includes("/chat/completions")
+            const url = rewrite ? new URL(codexApiEndpoint) : parsed
+            if (rewrite) {
+              const residency = extractResidency(currentAuth.access)
+              if (residency) headers.set("x-openai-internal-codex-residency", residency)
+            }
 
             const requestInit = {
               ...init,
+              body: init?.body,
               headers,
             }
             if (websocketFetch && parsed.pathname.endsWith("/responses")) return websocketFetch(url, requestInit)

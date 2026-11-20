@@ -1,7 +1,6 @@
-import { Show, For, useContext, type Component } from "solid-js"
+import { Show, For, lazy, useContext, type Component } from "solid-js"
 import type { EnrichedModel } from "../../context/provider"
 import { SessionContext } from "../../context/session"
-import { Markdown } from "@kilocode/kilo-ui/markdown"
 import { Icon } from "@kilocode/kilo-ui/icon"
 import { Tooltip } from "@kilocode/kilo-ui/tooltip"
 import { useLanguage } from "../../context/language"
@@ -15,6 +14,8 @@ import {
   sanitizeName,
 } from "./model-selector-utils"
 import { avgPrice, fmtAttemptCost, fmtCachedPrice, fmtPrice, fmtTerminalBenchScore } from "./model-preview-utils"
+
+const Markdown = lazy(() => import("./ModelDescription"))
 
 interface Props {
   model: EnrichedModel | null
@@ -50,12 +51,13 @@ export const ModelPreview: Component<Props> = (props) => {
       <Show when={m()}>
         {(model) => {
           const cost = () => model().cost
+          const hasPricing = () => cost() && (cost()!.input > 0 || cost()!.output > 0)
           const bench = () => model().terminalBench
           const cachedText = () => {
-            if (!cost()) return ""
+            if (!cost() || !hasPricing()) return ""
             return fmtCachedPrice(cost()!) ?? language.t("model.preview.value.notSupported")
           }
-          const avg = () => (cost() ? avgPrice(cost()!) : undefined)
+          const avg = () => (cost() && hasPricing() ? avgPrice(cost()!) : undefined)
           const freeLabel = () => language.t("model.tag.free")
           const dataLabel = () => freeDataLabel(language.t("model.tag.free"), language.t("model.tag.dataCollected"))
           const autoLabel = () => autoSummary(model())
@@ -139,8 +141,8 @@ export const ModelPreview: Component<Props> = (props) => {
                   <span class="model-preview-value">{fmtDate(model().releaseDate!)}</span>
                 </Show>
 
-                {/* Pricing — hidden for free models */}
-                <Show when={cost() && !model().isFree}>
+                {/* Pricing — hidden for free models or models without fixed pricing */}
+                <Show when={cost() && !model().isFree && hasPricing()}>
                   <span class="model-preview-label">{language.t("model.preview.label.input")}</span>
                   <span class="model-preview-value">{fmtPrice(cost()!.input)}</span>
                   <span class="model-preview-label">{language.t("model.preview.label.output")}</span>

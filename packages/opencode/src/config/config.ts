@@ -1,5 +1,5 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { httpClient } from "@opencode-ai/core/effect/layer-node-platform"
+import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import path from "path"
 import { pathToFileURL } from "url"
@@ -8,6 +8,7 @@ import { mergeDeep } from "remeda"
 import { Global } from "@opencode-ai/core/global"
 import fsNode from "fs/promises"
 import { Flag } from "@opencode-ai/core/flag/flag"
+import { notices } from "@opencode-ai/core/kilocode/fff" // kilocode_change
 import { Auth } from "../auth"
 import { Env } from "../env"
 import { applyEdits, findNodeAtLocation, modify, parseTree } from "jsonc-parser" // kilocode_change - parseTree/findNodeAtLocation used in patchJsonc
@@ -22,8 +23,8 @@ import { isRecord } from "@/util/record"
 import type { ConsoleState } from "@opencode-ai/core/v1/config/console-state"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { InstanceState } from "@/effect/instance-state"
-import { Context, Duration, Effect, Exit, Fiber, Layer, Option, Schema } from "effect"
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { Context, Duration, Effect, Fiber, Layer, Option, Schema } from "effect"
+import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
 import { containsPath, type InstanceContext } from "../project/instance-context"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
@@ -37,22 +38,30 @@ import { ConfigParse } from "./parse"
 import { ConfigPaths } from "./paths"
 import { ConfigPlugin } from "./plugin"
 import { ConfigVariable } from "./variable"
+import { ConfigV2Compat } from "./v2-compat"
 import { Npm } from "@opencode-ai/core/npm"
 import z from "zod" // kilocode_change - Kilo config compatibility schemas
 // kilocode_change start
 import { ZodOverride } from "@opencode-ai/core/effect-zod"
 import { KilocodeConfig } from "../kilocode/config/config"
+import { Excess } from "../kilocode/config/excess"
+import { sanitizeProjectMcpHeaders } from "../kilocode/config/mcp-headers"
 import { primaryPaths } from "../kilocode/primary-worktree"
 import { Git } from "@/git"
 import { KilocodeDefaultPlugins } from "@/kilocode/config/default-plugins"
 import { KilocodeGlobalConfigStamp } from "@/kilocode/config/global-stamp"
 import { SandboxConfig } from "@/kilocode/sandbox/config"
+import { ExternalMarkdown } from "@/kilocode/config/external-markdown"
+import { ClaudeMigration } from "@/kilocode/config/claude-migration" // kilocode_change
+import { ProviderModels } from "@/kilocode/config/provider-models"
+import * as ReservedCommand from "@/kilocode/command/reserved" // kilocode_change
 import type { KilocodeMarkdown } from "@/kilocode/config/markdown"
 import {
   IndexingConfig as KiloIndexingConfig,
   IndexingSchema as KiloIndexingSchema,
 } from "@kilocode/kilo-indexing/config"
 import { unique } from "remeda"
+import { installLocalPluginDependency, needsLocalPluginDependency } from "@/kilocode/config/plugin-deps"
 // kilocode_change end
 import { withTransientReadRetry } from "@/util/effect-http-client"
 import * as Log from "@opencode-ai/core/util/log" // kilocode_change
@@ -65,8 +74,9 @@ function mergeConfig(target: Info, source: Info): Info {
   return mergeDeep(target, source) as Info
 }
 
-function mergeConfigConcatArrays(target: Info, source: Info): Info {
-  const merged = mergeConfig(target, source)
+function mergeConfigConcatArrays(target: Info, source: Info, trusted = true): Info {
+  // kilocode_change
+  const merged = trusted ? mergeConfig(target, source) : KilocodeConfig.mergeProject(target, source)
   if (target.instructions && source.instructions) {
     merged.instructions = Array.from(new Set([...target.instructions, ...source.instructions]))
   }
@@ -75,7 +85,7 @@ function mergeConfigConcatArrays(target: Info, source: Info): Info {
 
 function normalizeLoadedConfig(data: unknown, source: string) {
   if (!isRecord(data)) return data
-  const copy = KilocodeConfig.retireIndexingFlag({ ...data }, source) // kilocode_change
+  const copy = KilocodeConfig.retireExperimentalFlags({ ...data }, source) // kilocode_change
   const hadLegacy = "theme" in copy || "keybinds" in copy || "tui" in copy
   if (!hadLegacy) return copy
   delete copy.theme
@@ -207,6 +217,13 @@ function globalConfigFile() {
 
 function patchJsonc(input: string, patch: unknown, path: string[] = []): string {
   if (!isRecord(patch)) {
+    // kilocode_change start - jsonc-parser throws when deleting a path whose
+    // parent does not exist in the document; absent keys are already "unset"
+    if (patch === null) {
+      const tree = parseTree(input)
+      if (!tree || !findNodeAtLocation(tree, path)) return input
+    }
+    // kilocode_change end
     const edits = modify(input, path, patch === null ? undefined : patch, {
       // kilocode_change
       formattingOptions: {
@@ -260,7 +277,7 @@ function writableGlobal(info: Info) {
   return next
 }
 
-export const layer = Layer.effect(
+const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const fs = yield* FSUtil.Service
@@ -273,6 +290,19 @@ export const layer = Layer.effect(
     const flock = yield* EffectFlock.Service // kilocode_change - serialize global config read-merge-write updates
 
     const readConfigFile = (filepath: string) => fs.readFileStringSafe(filepath).pipe(Effect.orDie)
+
+    const decodeConfig = Effect.fnUntraced(function* (input: unknown, source: string) {
+      const result = ConfigV2Compat.lower(normalizeLoadedConfig(input, source), source) // kilocode_change - Kilo normalizeLoadedConfig takes source
+      yield* Effect.forEach(result.diagnostics, (diagnostic) =>
+        Effect.logWarning("configuration compatibility diagnostic", {
+          source,
+          path: diagnostic.path,
+          kind: diagnostic.kind,
+          action: diagnostic.message,
+        }),
+      )
+      return ConfigParse.schema(ConfigV1.Info, result.value, source)
+    })
 
     const fetchRemoteJson = Effect.fnUntraced(function* <S extends Schema.Top>(
       url: string,
@@ -302,11 +332,12 @@ export const layer = Layer.effect(
 
     const loadConfig = Effect.fnUntraced(function* (
       text: string,
-      options: { path: string } | { dir: string; source: string },
+      options: { path: string; original?: string } | { dir: string; source: string }, // kilocode_change
       env?: Record<string, string>,
       // kilocode_change start - trusted allows {env:}; fileScope confines untrusted {file:} reads to a root
       trusted?: boolean,
       fileScope?: ConfigVariable.FileScope,
+      configWarnings?: Warning[],
       // kilocode_change end
     ) {
       const source = "path" in options ? options.path : options.source
@@ -318,19 +349,44 @@ export const layer = Layer.effect(
         ),
       )
       const parsed = ConfigParse.jsonc(expanded, source)
-      const data = ConfigParse.schema(ConfigV1.Info, normalizeLoadedConfig(parsed, source), source)
+      const sanitized = ProviderModels.sanitize(parsed, source) // kilocode_change
+      if (configWarnings) configWarnings.push(...sanitized.warnings) // kilocode_change
+      const normalized = normalizeLoadedConfig(sanitized.config, source) // kilocode_change
+      // kilocode_change start - preserve upstream excess-key compatibility while warning Kilo users about typos
+      if (configWarnings) {
+        // Warn for keys the V1 decoder drops and the V2 lowering does not consume. Probe the lowering
+        // with only that key so the answer does not depend on the rest of the document, and treat a key
+        // as consumed when the lowering adds a legacy counterpart for it.
+        const consumed = (key: string, value: unknown) => {
+          const lowered = ConfigV2Compat.lower({ [key]: value }, source).value
+          return isRecord(lowered) && Object.keys(lowered).some((candidate) => candidate !== key)
+        }
+        const record = normalized as Record<string, unknown>
+        const keys = Excess.keys(ConfigV1.Info, normalized).filter((key) => !consumed(key, record[key]))
+        if (keys.length) {
+          const detail = Excess.issue(keys)
+          configWarnings.push({
+            path: source,
+            message: `Configuration is invalid at ${source}: ${detail}`,
+            detail,
+          })
+        }
+      }
+      // kilocode_change end
+      const data = yield* decodeConfig(normalized, source) // kilocode_change - upstream V2 compatibility lowering
       if (!("path" in options)) return data
 
       yield* Effect.promise(() => resolveLoadedPlugins(data, options.path))
       if (!data.$schema) {
         // kilocode_change start
         data.$schema = "https://app.kilo.ai/config.json"
-        const edits = modify(text, ["$schema"], "https://app.kilo.ai/config.json", {
+        const original = options.original ?? text
+        const edits = modify(original, ["$schema"], "https://app.kilo.ai/config.json", {
           formattingOptions: { insertSpaces: true, tabSize: 2 },
           getInsertionIndex: () => 0,
         })
-        const updated = applyEdits(text, edits)
-        if (updated !== text) {
+        const updated = applyEdits(original, edits)
+        if (updated !== original) {
           yield* fs.writeFileString(options.path, updated).pipe(Effect.catch(() => Effect.void))
         }
         // kilocode_change end
@@ -343,18 +399,50 @@ export const layer = Layer.effect(
       env?: Record<string, string>,
       trusted?: boolean, // kilocode_change
       fileScope?: ConfigVariable.FileScope, // kilocode_change
+      configWarnings?: Warning[], // kilocode_change - collect MCP header expansion warnings
     ) {
       yield* Effect.logInfo("loading", { path: filepath })
       const text = yield* readConfigFile(filepath)
       if (!text) return {} as Info
-      return yield* loadConfig(text, { path: filepath }, env, trusted, fileScope) // kilocode_change
+      // kilocode_change start - remove variable-bearing project MCP headers before generic substitution can read them
+      const sanitized =
+        trusted === false ? sanitizeProjectMcpHeaders(ConfigParse.jsonc(text, filepath), filepath) : undefined
+      const content = sanitized ? (JSON.stringify(sanitized.config) ?? text) : text
+      if (sanitized && configWarnings) configWarnings.push(...sanitized.warnings)
+      const data = yield* loadConfig(
+        content,
+        { path: filepath, original: text },
+        trusted === false ? undefined : env,
+        trusted,
+        fileScope,
+        configWarnings,
+      )
+      // kilocode_change end
+      return data
     })
 
     let globalStamp = "" // kilocode_change
 
-    const loadGlobal = Effect.fnUntraced(function* (env?: Record<string, string>) {
+    const loadGlobal = Effect.fnUntraced(function* (
+      env?: Record<string, string>,
+      configWarnings?: Warning[], // kilocode_change - retain excess-key diagnostics for cached trusted config
+    ) {
       // kilocode_change start
       yield* Effect.promise(() => KilocodeConfig.migrateBashPermission())
+      if (Flag.KILO_EXPERIMENTAL_CLAUDE_MIGRATION && !ClaudeMigration.unsupportedContext()) {
+        yield* flock
+          .withLock(
+            Effect.promise(() => ClaudeMigration.run({ enabled: true })),
+            `config:global:${path.resolve(Global.Path.config)}`,
+          )
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Claude Code configuration migration failed", { error: String(cause) }).pipe(
+                Effect.as(undefined),
+              ),
+            ),
+          )
+      }
       globalStamp = yield* KilocodeGlobalConfigStamp.read(fs, Global.Path.config)
       // kilocode_change end
       let result: Info = {}
@@ -369,13 +457,28 @@ export const layer = Layer.effect(
         }
       }
       // kilocode_change - global config is user-owned and trusted to resolve {file:}/{env:} tokens
-      result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "config.json"), env, true))
+      result = mergeConfig(
+        result,
+        yield* loadFile(path.join(Global.Path.config, "config.json"), env, true, undefined, configWarnings),
+      )
       // kilocode_change start
-      result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "kilo.json"), env, true))
-      result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "kilo.jsonc"), env, true))
+      result = mergeConfig(
+        result,
+        yield* loadFile(path.join(Global.Path.config, "kilo.json"), env, true, undefined, configWarnings),
+      )
+      result = mergeConfig(
+        result,
+        yield* loadFile(path.join(Global.Path.config, "kilo.jsonc"), env, true, undefined, configWarnings),
+      )
       // kilocode_change end
-      result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "opencode.json"), env, true)) // kilocode_change
-      result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "opencode.jsonc"), env, true)) // kilocode_change
+      result = mergeConfig(
+        result,
+        yield* loadFile(path.join(Global.Path.config, "opencode.json"), env, true, undefined, configWarnings),
+      ) // kilocode_change
+      result = mergeConfig(
+        result,
+        yield* loadFile(path.join(Global.Path.config, "opencode.jsonc"), env, true, undefined, configWarnings),
+      ) // kilocode_change
 
       const legacy = path.join(Global.Path.config, "config")
       if (existsSync(legacy)) {
@@ -397,12 +500,20 @@ export const layer = Layer.effect(
       return result
     })
 
+    // kilocode_change start - cache global diagnostics with the parsed config so every instance can surface them
+    const loadGlobalState = Effect.fnUntraced(function* (env?: Record<string, string>) {
+      const warnings: Warning[] = []
+      const config = yield* loadGlobal(env, warnings)
+      return { config, warnings }
+    })
+    // kilocode_change end
+
     const [cachedGlobal, invalidateGlobal] = yield* Effect.cachedInvalidateWithTTL(
-      loadGlobal().pipe(
+      loadGlobalState().pipe(
         Effect.tapError((error) =>
           Effect.logError("failed to load global config, using defaults", { error: String(error) }),
         ),
-        Effect.orElseSucceed((): Info => ({})),
+        Effect.orElseSucceed(() => ({ config: {} as Info, warnings: [] as Warning[] })), // kilocode_change
       ),
       Duration.infinity,
     )
@@ -418,12 +529,21 @@ export const layer = Layer.effect(
     })
     // kilocode_change end
 
-    const getGlobal = Effect.fn("Config.getGlobal")(function* () {
+    // kilocode_change start - instance loading also consumes cached global warnings
+    const getGlobalState = Effect.fnUntraced(function* () {
       yield* refreshGlobal() // kilocode_change
       return yield* cachedGlobal
     })
+    // kilocode_change end
+
+    const getGlobal = Effect.fn("Config.getGlobal")(function* () {
+      return (yield* getGlobalState()).config // kilocode_change
+    })
 
     const ensureGitignore = Effect.fn("Config.ensureGitignore")(function* (dir: string) {
+      // kilocode_change start - optional config setup must not abort tools after entering filesystem confinement or read-only locations
+      yield* fs.ensureDir(dir).pipe(Effect.catchTag("PlatformError", () => Effect.void))
+      // kilocode_change end
       const gitignore = path.join(dir, ".gitignore")
       const hasIgnore = yield* fs.existsSafe(gitignore)
       if (!hasIgnore) {
@@ -443,19 +563,14 @@ export const layer = Layer.effect(
             ].join("\n"),
             // kilocode_change end
           )
-          .pipe(
-            Effect.catchIf(
-              (e) => e.reason._tag === "PermissionDenied" || e.reason._tag === "NotFound", // kilocode_change - also ignore NotFound (broken symlink/junction on Windows)
-              () => Effect.void,
-            ),
-          )
+          .pipe(Effect.catchTag("PlatformError", () => Effect.void)) // kilocode_change - optional gitignore write failure must not fail config load
       }
     })
 
     const loadInstanceState = Effect.fn("Config.loadInstanceState")(
       function* (ctx: InstanceContext) {
         // kilocode_change start - warning accumulator and legacy Kilo config
-        const warnings: Warning[] = []
+        const warnings: Warning[] = notices(ctx.directory)
         // Untrusted project config may only read files inside this root (worktree, or directory for non-git projects).
         const projectRoot = ctx.worktree === "/" ? ctx.directory : ctx.worktree
         const auth = yield* authSvc.all().pipe(Effect.orDie)
@@ -483,6 +598,7 @@ export const layer = Layer.effect(
           result = mergeConfigConcatArrays(result, { agent: orgModes.agents })
         }
         warnings.push(...orgModes.warnings)
+        let configuredAgents = { ...(result.agent ?? {}) }
         // kilocode_change end
 
         const authEnv: Record<string, string> = {}
@@ -541,7 +657,8 @@ export const layer = Layer.effect(
           const scope = kind ?? (yield* pluginScopeForSource(source))
           const trusted = sourceTrusted ?? scope === "global"
           const scoped = KilocodeConfig.scopeIndexing(SandboxConfig.scope(next, scope), scope)
-          result = mergeConfigConcatArrays(result, scoped)
+          result = mergeConfigConcatArrays(result, scoped, trusted) // kilocode_change
+          if (scoped.agent) configuredAgents = mergeDeep(configuredAgents, scoped.agent)
           if (next.instructions?.length) {
             result.instruction_origins = origins(result.instruction_origins, next.instructions, trusted, source)
           }
@@ -608,6 +725,8 @@ export const layer = Layer.effect(
                 },
                 authEnv,
                 true, // kilocode_change - well-known org config is a trusted source
+                undefined,
+                warnings, // kilocode_change - retain excess-key diagnostics from trusted org config
               )
               yield* merge(source, next, "global")
               yield* Effect.logDebug("loaded remote config from well-known", { url })
@@ -626,7 +745,15 @@ export const layer = Layer.effect(
         }
 
         // kilocode_change start - capture global config failures as warnings
-        const global = yield* (Object.keys(authEnv).length ? loadGlobal(authEnv) : getGlobal()).pipe(
+        const global = yield* (
+          Object.keys(authEnv).length
+            ? loadGlobal(authEnv, warnings)
+            : Effect.gen(function* () {
+                const state = yield* getGlobalState()
+                warnings.push(...state.warnings)
+                return state.config
+              })
+        ).pipe(
           Effect.catchDefect((err: unknown) => {
             caughtWarning(warnings, "global config", err)
             return Effect.succeed({} as Info)
@@ -641,7 +768,7 @@ export const layer = Layer.effect(
           yield* merge(
             Flag.KILO_CONFIG,
             // kilocode_change - KILO_CONFIG is an explicit user-provided path, trusted for {file:}/{env:}
-            yield* loadFile(Flag.KILO_CONFIG, authEnv, true).pipe(
+            yield* loadFile(Flag.KILO_CONFIG, authEnv, true, undefined, warnings).pipe(
               Effect.catchDefect((err: unknown) => {
                 caughtWarning(warnings, Flag.KILO_CONFIG!, err)
                 return Effect.succeed({} as Info)
@@ -660,8 +787,8 @@ export const layer = Layer.effect(
             for (const file of yield* ConfigPaths.files(name, ctx.directory, ctx.worktree).pipe(Effect.orDie)) {
               yield* merge(
                 file,
-                // kilocode_change - project config is untrusted: {env:} rejected, {file:} confined to projectRoot
-                yield* loadFile(file, authEnv, false, { root: projectRoot, source: file }).pipe(
+                // kilocode_change - project config is untrusted: {env:} rejected by substitution; MCP entries with variable-bearing headers dropped pre-substitution, {file:} confined to projectRoot
+                yield* loadFile(file, authEnv, false, { root: projectRoot, source: file }, warnings).pipe(
                   Effect.catchDefect((err: unknown) => {
                     caughtWarning(warnings, file, err)
                     return Effect.succeed({} as Info)
@@ -696,6 +823,7 @@ export const layer = Layer.effect(
 
         // kilocode_change start
         for (const dir of unique(directories)) {
+          const plugins: ConfigPluginV1.Spec[] = [] // kilocode_change - track file plugins contributed by this directory
           const scope = primarySet.has(dir) ? "local" : undefined
           // kilocode_change - trust {file:}/{env:} only for global-scoped config dirs, never project ones
           const dirScope = scope ?? (yield* pluginScopeForSource(dir))
@@ -711,18 +839,14 @@ export const layer = Layer.effect(
               yield* Effect.logDebug(`loading config from ${source}`)
               // kilocode_change - untrusted config dirs confine {file:} reads to projectRoot
               const fileScope = dirTrusted ? undefined : { root: projectRoot, source }
-              yield* merge(
-                source,
-                yield* loadFile(source, authEnv, dirTrusted, fileScope).pipe(
-                  // kilocode_change
-                  Effect.catchDefect((err: unknown) => {
-                    caughtWarning(warnings, source, err)
-                    return Effect.succeed({} as Info)
-                  }),
-                ),
-                dirScope,
-                dirTrusted,
+              const next = yield* loadFile(source, authEnv, dirTrusted, fileScope, warnings).pipe(
+                Effect.catchDefect((err: unknown) => {
+                  caughtWarning(warnings, source, err)
+                  return Effect.succeed({} as Info)
+                }),
               )
+              plugins.push(...(next.plugin ?? []))
+              yield* merge(source, next, dirScope, dirTrusted)
               result.agent ??= {}
               result.mode ??= {}
               result.plugin ??= []
@@ -732,45 +856,46 @@ export const layer = Layer.effect(
 
           yield* ensureGitignore(dir).pipe(Effect.orDie)
 
-          const dep = yield* npmSvc
-            .install(dir, {
-              add: [
-                {
-                  name: "@kilocode/plugin",
-                  version: InstallationLocal ? undefined : InstallationVersion,
-                },
-              ],
-            })
-            .pipe(
-              Effect.exit,
-              Effect.tap((exit) =>
-                Exit.isFailure(exit)
-                  ? Effect.logWarning("background dependency install failed", { dir, error: String(exit.cause) })
-                  : Effect.void,
-              ),
-              Effect.asVoid,
-              Effect.forkDetach,
-            )
-          deps.push(dep)
-
           // kilocode_change start - propagate parse errors to the Warning accumulator
+          const sourceScopes = (names: readonly string[]) => [
+            ...(dirSourceScope ? [dirSourceScope] : []),
+            ...ExternalMarkdown.scopes({
+              dir,
+              names,
+              permission: result.permission,
+              origins: result.permission_origins,
+            }),
+          ]
           result.command = mergeDeep(
             result.command ?? {},
-            yield* Effect.promise(() => ConfigCommand.load(dir, warnings, dirTrusted, dirFileScope, dirSourceScope)),
+            yield* Effect.promise(() =>
+              ConfigCommand.load(dir, warnings, dirTrusted, dirFileScope, sourceScopes(["command", "commands"])),
+            ),
           )
-          result.agent = mergeDeep(
+          result.agent = KilocodeConfig.mergeAgentMarkdown(
             result.agent ?? {},
-            yield* Effect.promise(() => ConfigAgent.load(dir, warnings, dirTrusted, dirFileScope, dirSourceScope)),
+            yield* Effect.promise(() =>
+              ConfigAgent.load(dir, warnings, dirTrusted, dirFileScope, sourceScopes(["agent", "agents"])),
+            ),
+            configuredAgents,
           )
-          result.agent = mergeDeep(
+          result.agent = KilocodeConfig.mergeAgentMarkdown(
             result.agent ?? {},
             yield* Effect.promise(() => ConfigAgent.loadMode(dir, warnings, dirTrusted, dirFileScope, dirSourceScope)),
+            configuredAgents,
           )
           // kilocode_change end
           // kilocode_change - Auto-discovered plugins under config directories are already local files, so ConfigPlugin.load
           // returns normalized Specs and we only need to attach origin metadata here.
           const list = yield* Effect.promise(() => ConfigPlugin.load(dir))
+          plugins.push(...list) // kilocode_change
           yield* mergePluginOrigins(dir, list, dirScope) // kilocode_change
+
+          // kilocode_change start
+          if (needsLocalPluginDependency(plugins)) {
+            deps.push(yield* installLocalPluginDependency(npmSvc, dir, InstallationVersion, InstallationLocal))
+          }
+          // kilocode_change end
         }
 
         if (process.env.KILO_CONFIG_CONTENT) {
@@ -786,6 +911,8 @@ export const layer = Layer.effect(
               },
               undefined,
               true, // kilocode_change - KILO_CONFIG_CONTENT is user-provided, trusted for {file:}/{env:}
+              undefined,
+              warnings, // kilocode_change - retain excess-key diagnostics from inline config
             ).pipe(
               Effect.tap(() => Effect.logDebug("loaded custom config from KILO_CONFIG_CONTENT")),
               Effect.catchDefect((err: unknown) => {
@@ -826,6 +953,8 @@ export const layer = Layer.effect(
                 },
                 undefined,
                 true, // kilocode_change - console-managed org config is a trusted source
+                undefined,
+                warnings, // kilocode_change - retain excess-key diagnostics from console-managed config
               )
               for (const providerID of Object.keys(next.provider ?? {})) {
                 consoleManagedProviders.add(providerID)
@@ -848,7 +977,7 @@ export const layer = Layer.effect(
           for (const file of KilocodeConfig.ALL_CONFIG_FILES) {
             const source = path.join(managedDir, file)
             // kilocode_change - MDM/enterprise-managed config is a trusted source
-            yield* merge(source, yield* loadFile(source, undefined, true), "global")
+            yield* merge(source, yield* loadFile(source, undefined, true, undefined, warnings), "global")
           }
         }
         // kilocode_change end
@@ -867,6 +996,8 @@ export const layer = Layer.effect(
               },
               undefined,
               true, // kilocode_change - MDM-managed preferences are a trusted source
+              undefined,
+              warnings, // kilocode_change - retain excess-key diagnostics from managed preferences
             ),
             "global",
           )
@@ -972,6 +1103,8 @@ export const layer = Layer.effect(
 
     const update = Effect.fn("Config.update")(function* (config: Info) {
       // kilocode_change start - delegate Kilo project config update behavior.
+      // Kilo's updateProjectConfig already reads the raw file (read: readConfigFile)
+      // and patches JSONC in place, so upstream's raw-text merge fix is covered.
       const ctx = yield* InstanceState.context
       yield* KilocodeConfig.updateProjectConfig({
         fs,
@@ -979,7 +1112,12 @@ export const layer = Layer.effect(
         worktree: ctx.worktree,
         config,
         read: readConfigFile,
-        parse: (input, file) => ConfigParse.schema(ConfigV1.Info, ConfigParse.jsonc(input, file), file),
+        parse: (input, file) =>
+          ConfigParse.schema(
+            ConfigV1.Info,
+            ConfigV2Compat.lower(normalizeLoadedConfig(ConfigParse.jsonc(input, file), file), file).value,
+            file,
+          ),
         patch: (input, patch) => patchJsonc(input, patch),
         writable,
       })
@@ -989,19 +1127,20 @@ export const layer = Layer.effect(
           directory: ctx.directory,
           payload: {
             type: Event.ConfigUpdated.type,
-            properties: {},
+            properties: { sandbox: Object.hasOwn(config, "sandbox") },
           },
         }),
       )
     })
 
     const warnings = Effect.fn("Config.warnings")(function* () {
-      return yield* InstanceState.use(state, (s) => s.warnings)
+      return yield* InstanceState.use(state, (s) => [...s.warnings, ...ReservedCommand.warnings(s.config.command)])
     })
     // kilocode_change end
 
     const invalidate = Effect.fn("Config.invalidate")(function* () {
       yield* invalidateGlobal
+      yield* InstanceState.invalidate(state).pipe(Effect.catchCause(() => Effect.void)) // kilocode_change
     })
 
     // kilocode_change start - add dispose option to skip Instance.disposeAll for permission-only changes
@@ -1015,20 +1154,30 @@ export const layer = Layer.effect(
           Effect.gen(function* () {
             const before = (yield* readConfigFile(file)) ?? "{}"
             const patch = writableGlobal(config)
+            // Reads merge every global config file, so delete sentinels must be
+            // removed from all of them, not just the primary write target.
+            const propagated = yield* KilocodeConfig.propagateUnset({
+              fs,
+              files: KilocodeConfig.GLOBAL_CONFIG_FILES.map((name) => path.join(Global.Path.config, name)),
+              exclude: file,
+              patch,
+            })
 
             if (!file.endsWith(".jsonc")) {
-              const existing = ConfigParse.schema(ConfigV1.Info, ConfigParse.jsonc(before, file), file)
-              const next = KilocodeConfig.mergeConfig(writable(existing), patch)
-              const serialized = JSON.stringify(next, null, 2)
-              const changed = serialized !== before
-              if (changed) yield* fs.writeFileString(file, serialized).pipe(Effect.orDie)
+              // Lower V2 native settings while keeping Kilo read-merge-write behavior.
+              const existing = normalizeLoadedConfig(ConfigParse.jsonc(before, file), file)
+              const merged = KilocodeConfig.preserve(existing, patch, file)
+              const next = yield* decodeConfig(merged, file)
+              const serialized = JSON.stringify(merged, null, 2)
+              const changed = serialized !== before || propagated
+              if (serialized !== before) yield* fs.writeFileString(file, serialized).pipe(Effect.orDie)
               return { next, changed }
             }
 
             const updated = patchJsonc(before, patch)
-            const next = ConfigParse.schema(ConfigV1.Info, ConfigParse.jsonc(updated, file), file)
-            const changed = updated !== before
-            if (changed) yield* fs.writeFileString(file, updated).pipe(Effect.orDie)
+            const next = yield* decodeConfig(ConfigParse.jsonc(updated, file), file) // Lower V2 native settings for the returned info.
+            const changed = updated !== before || propagated
+            if (updated !== before) yield* fs.writeFileString(file, updated).pipe(Effect.orDie)
             return { next, changed }
           }),
           `config:global:${path.resolve(Global.Path.config)}`,
@@ -1036,6 +1185,7 @@ export const layer = Layer.effect(
         .pipe(Effect.orDie)
       const next = result.next
       const changed = result.changed
+      const sandboxChanged = changed && Object.hasOwn(config, "sandbox")
       // kilocode_change end
 
       // kilocode_change start - skip dispose when caller opts out
@@ -1047,7 +1197,7 @@ export const layer = Layer.effect(
             directory: "global",
             payload: {
               type: Event.ConfigUpdated.type,
-              properties: {},
+              properties: { sandbox: sandboxChanged },
             },
           }),
         ).pipe(Effect.catchCause(() => Effect.void))
@@ -1064,7 +1214,7 @@ export const layer = Layer.effect(
             directory: "global",
             payload: {
               type: Event.ConfigUpdated.type,
-              properties: {},
+              properties: { sandbox: sandboxChanged },
             },
           }),
         ).pipe(Effect.catchCause(() => Effect.void))
@@ -1085,26 +1235,12 @@ export const layer = Layer.effect(
       warnings, // kilocode_change
     })
   }),
-).pipe(Layer.provide(EffectFlock.defaultLayer)) // kilocode_change - serialize global config updates in every layer
-
-export const defaultLayer = layer.pipe(
-  Layer.provide(Git.defaultLayer), // kilocode_change
-  Layer.provide(FSUtil.defaultLayer),
-  Layer.provide(Env.defaultLayer),
-  Layer.provide(Auth.defaultLayer),
-  Layer.provide(Account.defaultLayer),
-  Layer.provide(Npm.defaultLayer),
-  Layer.provide(FetchHttpClient.layer),
 )
 
-export const node = LayerNode.make(layer, [
-  FSUtil.node,
-  Auth.node,
-  Account.node,
-  Env.node,
-  Npm.node,
-  httpClient,
-  Git.node,
-]) // kilocode_change
+export const node = LayerNode.make({
+  service: Service,
+  layer: layer,
+  deps: [FSUtil.node, Auth.node, Account.node, Env.node, Npm.node, httpClient, Git.node, EffectFlock.node], // kilocode_change
+})
 
 export * as Config from "./config"

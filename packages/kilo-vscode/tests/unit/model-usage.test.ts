@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import type { Provider, SessionModelUsage } from "../../webview-ui/src/types/messages"
+import type { Message, Provider, SessionModelUsage } from "../../webview-ui/src/types/messages"
 import {
+  cacheRate,
   groupModelUsage,
   hasModelUsage,
   isSameSessionTree,
   modelUsageName,
+  sessionModel,
   tokenSummary,
 } from "../../webview-ui/src/context/model-usage"
 
@@ -44,6 +46,8 @@ describe("model usage", () => {
       }),
     ).toBeFalse()
     expect(tokenSummary(usage)).toEqual({ input: 10, output: 2, cached: 20 })
+    expect(cacheRate(models[0])).toBe("57.1%")
+    expect(cacheRate({ ...models[0], tokens: { ...tokens, input: 0, cache: { read: 0, write: 0 } } })).toBe("-")
     expect(groupModelUsage(models, providers).map((group) => group.providerName)).toEqual(["Kilo Gateway", "MiniMax"])
     expect(modelUsageName(models[0], providers)).toBe("Qwen 3.7 Plus")
     expect(modelUsageName(models[1], providers)).toBe("MiniMax M3")
@@ -64,5 +68,29 @@ describe("model usage", () => {
     expect(isSameSessionTree("child", "sibling", get)).toBeTrue()
     expect(isSameSessionTree("child", "new", get, "sibling")).toBeTrue()
     expect(isSameSessionTree("child", "other", get)).toBeFalse()
+  })
+
+  test("reads the model and variant of the latest message", () => {
+    const user = {
+      id: "u1",
+      sessionID: "child",
+      role: "user",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      model: { providerID: "kilo", modelID: "openai/gpt-5", variant: "high" },
+    } satisfies Message
+    const assistant = {
+      id: "a1",
+      sessionID: "child",
+      role: "assistant",
+      createdAt: "2026-01-01T00:00:01.000Z",
+      providerID: "minimax",
+      modelID: "minimax-m3",
+      variant: "low",
+    } satisfies Message
+
+    expect(sessionModel([])).toBeUndefined()
+    expect(sessionModel([user])).toEqual({ providerID: "kilo", modelID: "openai/gpt-5", variant: "high" })
+    expect(sessionModel([user, assistant])).toEqual({ providerID: "minimax", modelID: "minimax-m3", variant: "low" })
+    expect(sessionModel([user, { ...assistant, providerID: undefined }])).toEqual(user.model)
   })
 })

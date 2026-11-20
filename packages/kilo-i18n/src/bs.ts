@@ -1,12 +1,5 @@
 export const dict = {
   // Kilo Gateway provider translations
-  "provider.connect.kiloGateway.line1":
-    "Kilo Gateway omogućava pristup pažljivo odabranom skupu pouzdanih modela optimizovanih za rad sa agentima za kodiranje.",
-  "provider.connect.kiloGateway.line2":
-    "Sa jednim API ključem dobijate pristup modelima kao što su Claude, GPT, Gemini, GLM i drugi.",
-  "provider.connect.kiloGateway.visit.prefix": "Posjetite ",
-  "provider.connect.kiloGateway.visit.link": "kilo.ai",
-  "provider.connect.kiloGateway.visit.suffix": " da preuzmete svoj API ključ.",
   "provider.connect.kiloGateway.byok.prefix": "Za više statistika korištenja, koristite ",
   "provider.connect.kiloGateway.byok.link": "BYOK putem Kilo's Gateway",
   "provider.connect.kiloGateway.byok.suffix": ".",
@@ -29,14 +22,9 @@ export const dict = {
   "desktop.cli.installed.message": "CLI je instaliran u {{path}}\n\nRestartuj terminal da bi koristio komandu 'kilo'.",
 
   // Reasoning block label
-  "ui.permission.run": "Pokreni",
   "ui.reasoning.label": "Rezonovanje",
 
   // Marketplace
-  "marketplace.tab.skills": "Vještine",
-  "marketplace.tab.mcpServers": "MCP Serveri",
-  "marketplace.category.all": "Sve",
-  "marketplace.placeholder": "Biće implementirano",
   "marketplace.card.installed": "Instalirano",
   "marketplace.card.install": "Instaliraj",
   "marketplace.card.remove": "Ukloni",
@@ -52,6 +40,7 @@ export const dict = {
   "marketplace.install.scope.global.description":
     "Svi projekti na ovom računaru. Čuva se u vašoj korisničkoj konfiguraciji.",
   "marketplace.install.destination": "Odredište instalacije",
+  "marketplace.install.includedSkills": "Uključene vještine",
   "marketplace.install.about.mcp":
     "MCP server pruža Kilu dodatne alate za rad s vanjskim servisima ili lokalnim programima.",
   "marketplace.install.about.agent": "Agent dodaje višekratnu ulogu s vlastitim uputama i dozvolama.",
@@ -63,8 +52,11 @@ export const dict = {
     "Datoteke projekta mogu se dodati u kontrolu verzija. Ne čuvajte tajne ovdje osim ako konfiguracija upućuje na varijablu okruženja.",
   "marketplace.install.learnMore": "Saznajte kako funkcionišu instalacije s Marketplacea",
   "marketplace.install.learnMcp": "Saznajte više o MCP-u",
-  "marketplace.install.installedAt": "Instalirano u {{path}}",
-  "marketplace.intro": "Instalirajte višekratne agente, vještine i MCP alate za jedan ili sve projekte.",
+  "marketplace.install.about.plugin":
+    "Dodatak dodaje prilagođene alate i integracije u Kilo. Dodaci se izvršavaju sa svim dozvolama.",
+  "marketplace.install.plugin.warning":
+    "Dodaci izvršavaju kod sa svim dozvolama. Mogu čitati i mijenjati vaše datoteke, pokretati naredbe i pristupati vašim pristupnim podacima i mreži. Instalirajte samo dodatke kojima vjerujete.",
+  "marketplace.intro": "Instalirajte višekratne agente, vještine, MCP alate i dodatke za jedan ili sve projekte.",
   "marketplace.intro.learnMore": "O Marketplaceu",
   "marketplace.install.prerequisites": "Preduslovi",
   "marketplace.install.installing": "Instalacija...",
@@ -73,13 +65,20 @@ export const dict = {
   "marketplace.install.failed": "Instalacija nije uspjela",
   "marketplace.install.done": "Završeno",
   "marketplace.install.close": "Zatvori",
+  "marketplace.install.mcp.signIn.message": "{{name}} je instaliran, ali zahtijeva prijavu prije nego što se njegovi alati mogu koristiti.",
+  "marketplace.install.mcp.signIn.button": "Prijava",
+  "marketplace.install.mcp.signIn.waiting": "Čekanje na prijavu putem preglednika…",
+  "marketplace.install.mcp.signIn.cancel": "Otkaži",
+  "marketplace.install.mcp.signIn.skip": "Kasnije",
+  "marketplace.install.mcp.signIn.success": "Prijavljeni ste na {{name}}.",
+  "marketplace.install.mcp.signIn.failed": "Prijava na {{name}} nije uspjela.",
   "marketplace.remove.title": "Ukloniti {{name}}?",
   "marketplace.remove.confirm":
     "Jeste li sigurni da želite ukloniti ovaj {{type}}? Ovo će ga ukloniti iz vaše {{scope}} konfiguracije.",
   "marketplace.remove.cancel": "Otkaži",
+  "marketplace.remove.mcp.skills":
+    "Ovo uklanja i prateće vještine koje pripadaju ovoj instalaciji. Samostalno instalirane vještine se zadržavaju.",
   "marketplace.remove.confirm.button": "Ukloni",
-  "marketplace.tab.mcp": "MCP",
-  "marketplace.tab.agents": "Agenti",
   "marketplace.search": "Pretraži...",
   "marketplace.filter.all": "Sve stavke",
   "marketplace.filter.notInstalled": "Nije instalirano",
@@ -87,15 +86,15 @@ export const dict = {
   "marketplace.empty": "Nema pronađenih stavki",
   "marketplace.empty.relevant": "Nisu pronađene relevantne stavke marketplacea za ovaj radni prostor.",
   "marketplace.badge.mcpServer": "MCP Server",
-  "marketplace.badge.mode": "Režim",
+  "marketplace.badge.skills": "Uključuje vještine",
   "marketplace.card.by": "od {{author}}",
   "marketplace.install.method": "Metoda instalacije",
   "marketplace.install.parameters": "Parametri",
   "marketplace.install.optional": "(opciono)",
-  "marketplace.install.required": "{{name}} je obavezno",
   "marketplace.scope.project": "projekat",
   "marketplace.scope.global": "globalno",
   "marketplace.remove.type.mcp": "MCP server",
+  "marketplace.remove.type.plugin": "dodatak",
   "marketplace.remove.type.skill": "vještina",
   "marketplace.remove.type.agent": "agent",
   "marketplace.remove.failed": "Uklanjanje {{name}} nije uspjelo",
@@ -106,7 +105,7 @@ export const dict = {
   "marketplace.warning.busyMany": "Nekoliko sesija je pokrenuto i bit će prekinuto",
   "marketplace.warning.installAnyway": "Instaliraj svejedno",
   "marketplace.warning.cancel": "Otkaži",
-  "marketplace.contribute.prompt": "Nedostaje vještina, agent ili MCP server?",
+  "marketplace.contribute.prompt": "Nedostaje vještina, agent, MCP server ili dodatak?",
   "marketplace.contribute.cta": "Doprinesi na GitHub-u",
   "marketplace.migration.notice":
     "Modovi su zamijenjeni agentima. Ako ste prethodno instalirali marketplace modove, uklonite ih i ponovo instalirajte kao agente da biste prešli na novi format.",
@@ -134,8 +133,6 @@ export const dict = {
 
   // Edit-tool header and shell-tool section labels
   "ui.messagePart.openInDiffViewer": "Otvori u pregledniku razlika",
-  "ui.messagePart.shell.command": "Naredba",
-  "ui.messagePart.shell.output": "Izlaz",
   "ui.messagePart.openInEditor": "Otvori u editoru",
 
   // Message feedback (thumbs up/down per assistant response)

@@ -1,9 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import path from "node:path"
 
-// Run from webview-ui so the child transpiles JSX with solid-js (its tsconfig sets
-// jsxImportSource: solid-js). The package root tsconfig has no jsx setting, which makes
-// bun fall back to react/jsx-dev-runtime and fail whenever react isn't hoisted nearby.
+// Resolve Solid's browser exports and preload its JSX runtime before importing components.
 const WEBVIEW = path.resolve(import.meta.dir, "../../webview-ui")
 
 // solid-js effects only run under the browser export condition, so the component has to be
@@ -44,6 +42,13 @@ const SCRIPT = `
 
   const [config, setConfig] = createSignal({ disabled_providers: ["kilo"] })
   const [auth, setAuth] = createSignal({})
+  const [capture, setCapture] = createSignal(false)
+  const features = () => ({
+    indexing: false,
+    sandboxControls: false,
+    backgroundSubagents: false,
+    speechToText: capture(),
+  })
   const root = document.createElement("div")
   const dispose = render(
     () =>
@@ -51,7 +56,7 @@ const SCRIPT = `
         value: { authStates: auth },
         get children() {
           return createComponent(ConfigContext.Provider, {
-            value: { config },
+            value: { config, features },
             get children() {
               return createComponent(SpeechToTextPrewarm, {})
             },
@@ -65,8 +70,10 @@ const SCRIPT = `
   setAuth({ kilo: "api" })
   if (sent.length !== 0) fail("prewarmed while Kilo was disabled")
   setConfig({})
+  if (sent.length !== 0) fail("prewarmed without capture support")
+  setCapture(true)
   if (sent.length !== 1 || sent[0]?.type !== "speechToTextPrewarm") {
-    fail("did not prewarm after Kilo access became available")
+    fail("did not prewarm after capture became available")
   }
   setAuth({ kilo: "oauth" })
   if (sent.length !== 1) fail("prewarmed more than once")
@@ -80,11 +87,21 @@ describe("speech-to-text prewarm", () => {
     const failures: string[] = []
 
     for (let attempt = 1; attempt <= attempts; attempt++) {
-      const result = Bun.spawnSync(["bun", "--conditions=browser", "-e", SCRIPT], {
-        cwd: WEBVIEW,
-        stdout: "pipe",
-        stderr: "pipe",
-      })
+      const result = Bun.spawnSync(
+        [
+          "bun",
+          "--preload",
+          path.resolve(import.meta.dir, "../setup/worker-url.ts"),
+          "--conditions=browser",
+          "-e",
+          SCRIPT,
+        ],
+        {
+          cwd: WEBVIEW,
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      )
       const output = result.stdout.toString() + result.stderr.toString()
 
       if (output.includes(PASS)) return

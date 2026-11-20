@@ -4,7 +4,7 @@
  * Uses kilo-ui's DockPrompt component for proper surface styling.
  */
 
-import { For, Show, createMemo, createEffect, onCleanup } from "solid-js"
+import { For, Show, createMemo, createEffect } from "solid-js"
 import type { Component } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Button } from "@kilocode/kilo-ui/button"
@@ -13,27 +13,28 @@ import { useSession } from "../../context/session"
 import { useLanguage } from "../../context/language"
 import type { QuestionRequest } from "../../types/messages"
 import {
-  clearActiveQuestionTab,
   pickOutcome,
   resolveOptimisticQuestionAgent,
   resolveSelectedQuestionMode,
-  setActiveQuestionTab,
   toggleAnswer,
   tr,
 } from "./question-dock-utils"
 import { isEnterKeyCommitNotIme } from "../../utils/ime-enter"
+import { isTextControl } from "../../utils/focus"
 
 export const QuestionDock: Component<{ request: QuestionRequest }> = (props) => {
   const session = useSession()
   const language = useLanguage()
-  const id = props.request.id
 
   const questions = createMemo(() => props.request.questions)
   const single = createMemo(() => questions().length === 1 && questions()[0]?.multiple !== true)
 
   const [store, setStore] = createStore({
     tab: 0,
-    answers: [] as string[][],
+    answers: questions().map((q) => {
+      const option = !q.multiple && q.options.find((opt) => opt.label === q.default)
+      return option ? [option.label] : []
+    }),
     custom: [] as string[],
     kinds: [] as Record<string, "option" | "custom">[],
     editing: false,
@@ -54,12 +55,6 @@ export const QuestionDock: Component<{ request: QuestionRequest }> = (props) => 
       }
     }
   })
-
-  // Chat search indexes only the mounted page's options, and there's no
-  // other signal exposing which page that is — publish it here so search
-  // stays in sync as the user navigates instead of always assuming page 0.
-  createEffect(() => setActiveQuestionTab(id, store.tab))
-  onCleanup(() => clearActiveQuestionTab(id))
 
   const question = createMemo(() => questions()[store.tab])
   const confirm = createMemo(() => !single() && store.tab === questions().length)
@@ -124,6 +119,8 @@ export const QuestionDock: Component<{ request: QuestionRequest }> = (props) => 
   }
 
   const submit = () => {
+    if (store.sending) return
+    syncAgent(store.answers)
     reply(questions().map((_, i) => [...(store.answers[i] ?? [])]))
   }
 
@@ -231,6 +228,19 @@ export const QuestionDock: Component<{ request: QuestionRequest }> = (props) => 
   }
 
   const onKey = (e: KeyboardEvent) => {
+    if (
+      single() &&
+      question()?.options.some((opt) => opt.label === question()?.default) &&
+      isEnterKeyCommitNotIme(e) &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      (e.target as HTMLElement).matches("button[data-picked='true']:not([data-custom])")
+    ) {
+      e.preventDefault()
+      e.stopPropagation()
+      submit()
+      return
+    }
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return
     if ((e.target as HTMLElement).tagName === "INPUT") return
     e.preventDefault()
@@ -328,8 +338,10 @@ export const QuestionDock: Component<{ request: QuestionRequest }> = (props) => 
     void store.tab
     if (store.collapsed || store.editing || confirm()) return
     requestAnimationFrame(() => {
-      if (!document.hasFocus()) return
-      const btn = root?.querySelector<HTMLButtonElement>("button[data-slot='question-option']:not(:disabled)")
+      if (!document.hasFocus() || isTextControl(document.activeElement) || !root?.isConnected) return
+      const selector = "button[data-slot='question-option']:not(:disabled)"
+      const picked = root?.querySelector<HTMLButtonElement>(`${selector}[data-picked='true']`)
+      const btn = picked ?? root?.querySelector<HTMLButtonElement>(selector)
       btn?.focus({ preventScroll: true })
     })
   })
@@ -348,7 +360,9 @@ export const QuestionDock: Component<{ request: QuestionRequest }> = (props) => 
         <div data-slot="question-dock-header-content">
           <div data-slot="question-header-title">{summary()}</div>
           <Show when={store.collapsed}>
-            <div data-slot="question-collapsed-preview">{questionText()}</div>
+            <div data-slot="question-collapsed-preview" dir="auto">
+              {questionText()}
+            </div>
           </Show>
         </div>
         <div data-slot="question-header-actions" onClick={(e: MouseEvent) => e.stopPropagation()}>
@@ -391,7 +405,9 @@ export const QuestionDock: Component<{ request: QuestionRequest }> = (props) => 
       <div data-slot="question-dock-body" inert={store.collapsed || undefined}>
         <div data-slot="question-dock-body-inner">
           <Show when={!confirm()}>
-            <div data-slot="question-text">{questionText()}</div>
+            <div data-slot="question-text" dir="auto">
+              {questionText()}
+            </div>
             <Show when={multi()} fallback={<div data-slot="question-hint">{language.t("ui.question.singleHint")}</div>}>
               <div data-slot="question-hint">{language.t("ui.question.multiHint")}</div>
             </Show>
@@ -419,9 +435,13 @@ export const QuestionDock: Component<{ request: QuestionRequest }> = (props) => 
                         </span>
                       </span>
                       <span data-slot="question-option-main">
-                        <span data-slot="option-label">{localized.label()}</span>
+                        <span data-slot="option-label" dir="auto">
+                          {localized.label()}
+                        </span>
                         <Show when={localized.description()}>
-                          <span data-slot="option-description">{localized.description()}</span>
+                          <span data-slot="option-description" dir="auto">
+                            {localized.description()}
+                          </span>
                         </Show>
                       </span>
                     </button>
@@ -498,8 +518,10 @@ export const QuestionDock: Component<{ request: QuestionRequest }> = (props) => 
                   const answered = () => Boolean(value())
                   return (
                     <div data-slot="review-item">
-                      <span data-slot="review-label">{tr(language.t, q.questionKey, q.question)}</span>
-                      <span data-slot="review-value" data-answered={answered()}>
+                      <span data-slot="review-label" dir="auto">
+                        {tr(language.t, q.questionKey, q.question)}
+                      </span>
+                      <span data-slot="review-value" data-answered={answered()} dir="auto">
                         {answered() ? value() : language.t("ui.question.review.notAnswered")}
                       </span>
                     </div>

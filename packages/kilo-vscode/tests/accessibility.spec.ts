@@ -10,10 +10,18 @@ const STORIES = [
   { id: "profile--not-logged-in", name: "Profile / not logged in" },
   { id: "profile--logged-in-personal", name: "Profile / personal account" },
   { id: "profile--logged-in", name: "Profile / organization account" },
+  { id: "profile--organization-context", name: "Profile / selected organization" },
+  { id: "profile--stale-and-unavailable", name: "Profile / stale usage" },
+  { id: "profile--empty-usage", name: "Profile / empty usage" },
   { id: "settings--providers-configure", name: "Settings / providers empty state" },
   { id: "marketplace--empty-list", name: "Marketplace / empty state" },
   { id: "agentmanager--sidebar-search-open", name: "Agent Manager / sidebar search" },
+  { id: "agentmanager--side-terminal-panel-empty", name: "Agent Manager / side terminal" },
   { id: "session-tabs--switcher-open", name: "Session tabs / switcher" },
+  { id: "iconbutton--states", name: "IconButton / shared states" },
+  { id: "agentmanager--splash-cross-stack-story-1280", name: "Splash / expanded" },
+  { id: "agentmanager--splash-thin-story", name: "Splash / thin" },
+  { id: "agentmanager--splash-folded-story-1280", name: "Splash / folded" },
 ]
 
 function url(id: string) {
@@ -44,10 +52,55 @@ async function reach(page: Page, target: Locator) {
 test.describe("webview accessibility ratchet", () => {
   for (const story of STORIES) {
     test(`${story.name} passes automated WCAG checks`, async ({ page }) => {
+      if (story.id.endsWith("-1280")) await page.setViewportSize({ width: 1280, height: 1400 })
       await open(page, story.id)
+      const splash = story.id.startsWith("agentmanager--splash-")
+      if (splash) {
+        // Guard the capture harness: a wide story in the default sidebar viewport silently tests thin mode.
+        const width = await page
+          .locator(".am-splash, .am-splash-folded")
+          .evaluate((node) => node.getBoundingClientRect().width)
+        const minimum = story.id.includes("-thin-") ? 340 : story.id.includes("-narrow-") ? 560 : 880
+        expect(width).toBeGreaterThanOrEqual(minimum)
+        if (minimum < 880) expect(width).toBe(minimum)
+      }
       await scan(page)
     })
   }
+
+  test("IconButton states expose labels, keyboard state, disabled state, and tooltips", async ({ page }) => {
+    await open(page, "iconbutton--states")
+
+    const create = page.getByRole("button", { name: "Create item", exact: true })
+    const disabled = page.getByRole("button", { name: "Delete item", exact: true })
+    const loading = page.getByRole("button", { name: "Refresh item", exact: true })
+    const toggle = page.getByRole("button", { name: "Toggle changes", exact: true })
+    const content = page.getByTestId("icon-button-with-content")
+    const indexing = page.getByRole("button", { name: "Indexing", exact: true })
+
+    await expect(create).toBeVisible()
+    await expect(disabled).toBeDisabled()
+    await expect(disabled).toHaveAttribute("aria-label", "Delete item")
+    await expect(loading).toBeDisabled()
+    await expect(loading).toHaveAttribute("aria-busy", "true")
+    const contentBox = await content.boundingBox()
+    const iconBox = await content.locator('[data-slot="icon-svg"]').boundingBox()
+    expect(contentBox?.width).toBeGreaterThan(20)
+    expect(iconBox?.x).toBeGreaterThanOrEqual((contentBox?.x ?? 0) - 1)
+    await expect(indexing.locator('[data-slot="icon-svg"]')).toHaveAttribute("viewBox", "0 0 24 24")
+    expect(await indexing.locator('[data-slot="icon-svg"]').evaluate((el) => getComputedStyle(el).strokeWidth)).toBe(
+      "1.5px",
+    )
+    await expect(toggle).toHaveAttribute("aria-pressed", "false")
+
+    await reach(page, toggle)
+    await expect(toggle).toBeFocused()
+    await page.keyboard.press("Enter")
+    await expect(toggle).toHaveAttribute("aria-pressed", "true")
+
+    await create.hover()
+    await expect(page.locator('[data-component="tooltip"]')).toContainText("Create item")
+  })
 
   test("Agent Manager keeps virtualized transcript fragments laid out", async ({ page }) => {
     await open(page, "agentmanager--sidebar-search-open")
@@ -227,5 +280,28 @@ test.describe("webview accessibility ratchet", () => {
       await open(page, id)
       await expect(page.getByRole("dialog")).toHaveAccessibleName(/.+/)
     }
+  })
+
+  test("To-do cards render read-only checkboxes with labeled states", async ({ page }) => {
+    await open(page, "composite-webview--todo-write-completed")
+
+    const card = page.locator('[data-component="todos"]')
+    const done = card.getByRole("checkbox", { name: "Create a haiku about Jan" })
+    const active = card.getByRole("checkbox", { name: "Create a poem about Henk" })
+
+    await expect(done).toBeChecked()
+    await expect(active).not.toBeChecked()
+    await expect(done).toHaveAttribute("aria-readonly", "true")
+    await expect(active).toHaveAttribute("aria-readonly", "true")
+    await expect(card.locator('[data-component="checkbox"][data-readonly]')).toHaveCount(2)
+    await expect(card.locator('[data-slot="checkbox-checkbox-indicator"]')).toHaveCount(1)
+    await expect(card.locator('[data-slot="message-part-todo-content"][data-completed="completed"]')).toHaveText(
+      "Create a haiku about Jan",
+    )
+
+    await active.focus()
+    await page.keyboard.press("Space")
+    await expect(active).not.toBeChecked()
+    await expect(done).toBeChecked()
   })
 })

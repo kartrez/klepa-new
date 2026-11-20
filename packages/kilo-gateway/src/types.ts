@@ -83,9 +83,9 @@ export interface KiloProviderOptions {
   openRouterSpecificProvider?: string
 
   /**
-   * Base URL for the KiloCode API
-   * Can be overridden by KILO_API_URL environment variable
-   * @default "https://api.kilo.ai"
+   * Base URL for Kilo Gateway traffic
+   * Defaults to KILO_AI_GATEWAY_URL, or `${KILO_API_URL}/api/gateway/v1` when only KILO_API_URL is set
+   * @default "https://ai-gateway.kilo.ai/api/v1"
    */
   baseURL?: string
 
@@ -174,9 +174,7 @@ export interface ProviderInfo {
 }
 
 export type KiloProvider = Provider & {
-  alibaba(modelId: string): LanguageModel
   anthropic(modelId: string): LanguageModel
-  mistral(modelId: string): LanguageModel
   openai(modelId: string): LanguageModel
   openaiCompatible(modelId: string): LanguageModel
 }

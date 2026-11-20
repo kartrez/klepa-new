@@ -9,7 +9,7 @@ description: "Configure automatic approval settings for Kilo Code operations"
 **Security Warning:** Auto-approve settings bypass confirmation prompts, giving Kilo Code direct access to your system. This can result in data loss, file corruption, or worse. Command line access is particularly dangerous, as it can potentially execute harmful operations that could damage your system or compromise security. Only enable auto-approval for actions you fully trust.
 {% /callout %}
 
-Auto-approve settings speed up your workflow by eliminating repetitive confirmation prompts, but they significantly increase security risks. The VS Code extension and CLI share the same permission model; choose the tab that matches how you configure Kilo Code.
+Auto-approve settings speed up your workflow by eliminating repetitive confirmation prompts, but they significantly increase security risks. The VS Code extension, JetBrains plugin, and CLI share the same permission model; choose the tab that matches how you configure Kilo Code. In the JetBrains plugin, the same rules are configured under **Settings → Tools → Kilo Code → Auto-Approve**.
 
 {% callout type="note" %}
 **Editing project config while a session is running:** Kilo caches project-level `kilo.jsonc` / `kilo.json` (in `.kilo/`) when it first loads a workspace, and does not re-read it on every prompt. If you add, change, or remove a project permission rule while the backend is already running, reload the VS Code window (or start a fresh CLI session) for the change to take effect. Until then, Kilo keeps using the previously loaded rules — so an auto-approved call may still cite a project rule you just edited. Global config (`~/.config/kilo/`) is reloaded automatically.
@@ -59,18 +59,21 @@ The Auto Approve tab lists the following tool-specific permissions. Some tools a
 
 ## Runtime Permission Requests
 
-When a tool is set to `"ask"`, Kilo pauses and displays a permission prompt with two options:
+When a tool is set to `"ask"`, Kilo pauses and displays a permission prompt:
 
 | Option | Behavior |
 |---|---|
 | **Run** | Allow this specific invocation |
-| **Deny** | Block this specific invocation |
+| **Deny** | Reveal an optional feedback field |
+| **Reject** | Block this specific invocation and send any feedback to the agent |
+
+In the feedback field, describe what the agent should change before it retries. Press `Enter` to post the rejection, `Shift+Enter` to add a newline, or `Escape` to cancel.
 
 Use the shield button in the prompt controls to toggle runtime auto-approve for permission prompts without opening Settings. When enabled, the shield is highlighted and pending permission prompts are approved automatically. The runtime state stays synced across the sidebar, open Kilo tabs, and Agent Manager session views.
 
 Expand **Manage Auto-Approve Rules** to add commands or patterns to your allowed or denied lists. These rules are then appended to the bottom of the approval rules in settings and the config file.
 
-For the `agent_manager` tool, runtime approvals use the requested capability as the pattern: `worktree`, `local`, `overview`, or `prompt`. Prompting an existing managed session always requires an explicit `prompt` approval the first time, even when a broad Agent Manager allow rule already exists.
+For the `agent_manager` tool, runtime approvals use the requested capability as the pattern: `worktree`, `local`, `overview`, `prompt`, `stop`, `move`, or `answer`. Prompting, stopping, moving, or answering a managed session requires its own explicit capability approval the first time, even when a broad Agent Manager allow rule already exists.
 
 ## MCP Tool Permissions
 
@@ -85,6 +88,7 @@ Most tools default to `"*": "allow"` for a smooth out-of-the-box experience. Not
 - **`.env` files** — reading `.env` files prompts for approval. Files matching `*.env.*` (e.g., `.env.local`, `.env.production`) also trigger an ask, while `*.env.example` is explicitly allowed.
 - **`external_directory`** — accessing files outside the project prompts for approval
 - **`doom_loop`** — prompts when the agent enters a repeated failure cycle
+- **`edit` (JetBrains plugin only)** — file edits prompt for approval. This is a plugin default, not an environment override: set `permission.edit` in your global or project `kilo.jsonc`, or use **Settings → Tools → Kilo Code → Auto-Approve**, to change it.
 
 {% /tab %}
 {% tab label="CLI" %}
@@ -265,7 +269,7 @@ When a tool is set to `"ask"`, Kilo pauses and displays a permission prompt. You
 |---|---|
 | **Allow once** | Allow this specific invocation only |
 | **Allow always** | Save an allow rule for the matching tool or pattern in your global config |
-| **Reject** | Block this specific invocation |
+| **Reject** | Block this specific invocation; you can add optional feedback that the agent uses to adjust before retrying |
 
 For shell commands, saved approvals are written under `permission.bash` and apply across CLI sessions.
 
@@ -276,6 +280,7 @@ Most tools default to `"*": "allow"` for a smooth out-of-the-box experience. Not
 - **`.env` files** — reading `.env` files prompts for approval. Files matching `*.env.*` (e.g., `.env.local`, `.env.production`) also trigger an ask, while `*.env.example` is explicitly allowed.
 - **`external_directory`** — accessing files outside the project prompts for approval
 - **`doom_loop`** — prompts when the agent enters a repeated failure cycle
+- **`edit` (JetBrains plugin only)** — file edits prompt for approval. This is a plugin default, not an environment override: set `permission.edit` in your global or project `kilo.jsonc`, or use **Settings → Tools → Kilo Code → Auto-Approve**, to change it.
 
 ## MCP Tool Permissions
 

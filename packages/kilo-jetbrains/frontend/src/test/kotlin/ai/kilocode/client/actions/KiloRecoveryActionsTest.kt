@@ -1,14 +1,31 @@
 package ai.kilocode.client.actions
 
+import ai.kilocode.client.agentManager.AgentManagerAvailability
+import ai.kilocode.client.agentManager.AgentManagerCommand
+import ai.kilocode.client.agentManager.AgentManagerElement
+import ai.kilocode.client.agentManager.AgentManagerFacade
+import ai.kilocode.client.agentManager.AgentManagerKeys
+import ai.kilocode.rpc.dto.HostedWorkspaceDto
+import ai.kilocode.rpc.dto.HostedWorkspaceRefDto
 import ai.kilocode.client.app.KiloAppService
+import ai.kilocode.client.app.KiloHostedService
 import ai.kilocode.client.app.KiloWorkspaceService
 import ai.kilocode.client.app.Workspace
+import ai.kilocode.client.plugin.KiloBundle
 import ai.kilocode.client.session.SessionManager
+import ai.kilocode.client.settings.KiloSettingsSelection
+import ai.kilocode.client.settings.marketplace.MarketplaceConfigurable
 import ai.kilocode.client.testing.FakeAppRpcApi
+import ai.kilocode.client.testing.FakeAgentManagerFacade
 import ai.kilocode.client.testing.FakeWorkspaceRpcApi
+import ai.kilocode.client.testing.TestLog
+import ai.kilocode.client.util.edtWait
 import ai.kilocode.rpc.dto.ConfigTargetDto
 import ai.kilocode.rpc.dto.KiloWorkspaceStateDto
 import ai.kilocode.rpc.dto.KiloWorkspaceStatusDto
+import ai.kilocode.rpc.dto.SetupScriptTargetDto
+import ai.kilocode.rpc.dto.WorktreeDto
+import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.actionSystem.AnAction
@@ -18,12 +35,16 @@ import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.Presentation
 import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.ui.TestDialog
+import com.intellij.openapi.ui.TestDialogManager
 import com.intellij.testFramework.replaceService
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -53,6 +74,7 @@ class KiloRecoveryActionsTest : BasePlatformTestCase() {
 
     override fun tearDown() {
         try {
+            TestDialogManager.setTestDialog(TestDialog.DEFAULT)
             scope.cancel()
         } finally {
             super.tearDown()
@@ -77,6 +99,71 @@ class KiloRecoveryActionsTest : BasePlatformTestCase() {
         assertTrue("Reinstall should force-enable recovery action", event.presentation.isEnabled)
     }
 
+    fun `test restart warns before cancelling active sessions`() {
+        val action = RestartKiloAction()
+        val notices = mutableListOf<String>()
+        TestDialogManager.setTestDialog { message ->
+            notices.add(message)
+            Messages.NO
+        }
+
+        action.actionPerformed(event(action))
+
+        assertEquals(0, appRpc.restarts)
+        assertTrue(notices.single().contains("cancel all active sessions"))
+
+        TestDialogManager.setTestDialog(TestDialog.YES)
+        action.actionPerformed(event(action))
+        runBlocking {
+            withTimeout(5_000) {
+                while (appRpc.restarts == 0) delay(5)
+            }
+        }
+        assertEquals(1, appRpc.restarts)
+    }
+
+    fun `test reinstall warns before cancelling active sessions`() {
+        val action = ReinstallKiloAction()
+        val notices = mutableListOf<String>()
+        TestDialogManager.setTestDialog { message ->
+            notices.add(message)
+            Messages.NO
+        }
+
+        action.actionPerformed(event(action))
+
+        assertEquals(0, appRpc.reinstalls)
+        assertTrue(notices.single().contains("cancel all active sessions"))
+
+        TestDialogManager.setTestDialog(TestDialog.YES)
+        action.actionPerformed(event(action))
+        runBlocking {
+            withTimeout(5_000) {
+                while (appRpc.reinstalls == 0) delay(5)
+            }
+        }
+        assertEquals(1, appRpc.reinstalls)
+    }
+
+    fun `test reload core settings action requires and uses the current workspace`() {
+        val action = ReloadCoreSettingsAction()
+        val missing = event(action)
+        update(action, missing)
+        assertFalse(missing.presentation.isEnabled)
+
+        val active = event(action, workspace("/test worktree"))
+        update(action, active)
+        assertTrue(active.presentation.isEnabled)
+
+        action.actionPerformed(active)
+        runBlocking {
+            withTimeout(5_000) {
+                while (rpc.coreReloads.isEmpty()) delay(5)
+            }
+        }
+        assertEquals(listOf("/test worktree"), rpc.coreReloads.toList())
+    }
+
     fun `test restart action adds core suffix in connection retry popup`() {
         val action = RestartKiloAction()
         val event = event(action, place = KiloActionPlaces.connectionRetryPopup())
@@ -84,6 +171,36 @@ class KiloRecoveryActionsTest : BasePlatformTestCase() {
         update(action, event)
 
         assertEquals("Restart Core", event.presentation.text)
+    }
+
+    fun `test refresh cloud uses the current workspace off the UI thread without restarting core`() {
+        val resolved = CompletableDeferred<Pair<String, Boolean>>()
+        val hosted = KiloHostedService(
+            cs = scope,
+            rpc = null,
+            log = TestLog(),
+            repo = { dir ->
+                resolved.complete(dir to ApplicationManager.getApplication().isDispatchThread)
+                null
+            },
+        )
+        project.replaceService(KiloHostedService::class.java, hosted, testRootDisposable)
+        assertTrue("Cloud discovery must be enabled by default", hosted.enabled())
+        val action = RefreshCloudAction()
+        val missing = event(action)
+        update(action, missing)
+        assertFalse(missing.presentation.isEnabled)
+        val active = event(action, workspace("/test cloud"))
+        update(action, active)
+        assertTrue(active.presentation.isEnabled)
+
+        action.actionPerformed(active)
+
+        val result = runBlocking { withTimeout(5_000) { resolved.await() } }
+        assertEquals("/test cloud" to false, result)
+        assertEquals(1L, hosted.refreshes.value)
+        assertEquals(0, appRpc.restarts)
+        assertEquals(0, appRpc.reinstalls)
     }
 
     fun `test reinstall action adds core suffix in connection retry popup`() {
@@ -95,12 +212,17 @@ class KiloRecoveryActionsTest : BasePlatformTestCase() {
         assertEquals("Reinstall Core", event.presentation.text)
     }
 
-    fun `test core group has visible menu text and info action`() {
+    fun `test core group separates reload from recovery actions`() {
         val xml = requireNotNull(javaClass.classLoader.getResourceAsStream("kilo.jetbrains.frontend.xml"))
             .bufferedReader()
             .use { it.readText() }
 
         assertTrue(xml.contains("<group id=\"Kilo.CliGroup\" text=\"Core\" popup=\"true\">"))
+        val reload = xml.indexOf("<reference ref=\"Kilo.ReloadCoreSettings\"/>")
+        val cloud = xml.indexOf("<reference ref=\"Kilo.RefreshCloud\"/>")
+        val restart = xml.indexOf("<reference ref=\"Kilo.Restart\"/>")
+        assertTrue(reload < cloud && cloud < restart)
+        assertTrue(xml.substring(reload, restart).contains("<separator/>"))
         assertTrue(xml.contains("<reference ref=\"Kilo.Restart\"/>"))
         assertTrue(xml.contains("<reference ref=\"Kilo.Reinstall\"/>"))
         assertTrue(xml.contains("<reference ref=\"Kilo.CoreInfo\"/>"))
@@ -108,7 +230,74 @@ class KiloRecoveryActionsTest : BasePlatformTestCase() {
         assertTrue(xml.contains("<reference ref=\"Kilo.OpenConfigGroup\"/>"))
         assertFalse(xml.contains("<action id=\"Kilo.ShowProfile\""))
         assertFalse(xml.contains("<reference ref=\"Kilo.ShowProfile\"/>"))
+
+        // The setup-script action lives only in the worktree row menu, not the tool-window popup.
+        val settingsGroupStart = xml.indexOf("<group id=\"Kilo.SettingsGroup\">")
+        val settingsGroupEnd = xml.indexOf("</group>", settingsGroupStart)
+        assertFalse(xml.substring(settingsGroupStart, settingsGroupEnd).contains("Kilo.OpenSetupScript"))
     }
+
+    fun `test settings menu offers page shortcuts between open settings and the config groups`() {
+        val xml = requireNotNull(javaClass.classLoader.getResourceAsStream("kilo.jetbrains.frontend.xml"))
+            .bufferedReader()
+            .use { it.readText() }
+        val start = xml.indexOf("<group id=\"Kilo.SettingsGroup\">")
+        val group = xml.substring(start, xml.indexOf("</group>", start))
+
+        val order = Regex("<separator\\s*/>|<reference\\s+ref=\"([^\"]+)\"\\s*/>")
+            .findAll(group)
+            .map { it.groupValues[1].ifEmpty { "---" } }
+            .toList()
+
+        assertEquals(
+            listOf(
+                "Kilo.OpenSettings",
+                "---",
+                "Kilo.OpenUserProfileSettings",
+                "Kilo.OpenMarketplaceSettings",
+                "---",
+                "Kilo.OpenConfigGroup",
+                "---",
+                "Kilo.CliGroup",
+            ),
+            order,
+        )
+        assertTrue(xml.contains("<action id=\"Kilo.OpenUserProfileSettings\""))
+        assertTrue(xml.contains("<action id=\"Kilo.OpenMarketplaceSettings\""))
+    }
+
+    fun `test settings shortcuts target their own pages while open settings resumes the last one`() {
+        assertEquals("ai.kilocode.jetbrains.settings.profile", page(OpenUserProfileSettingsAction()))
+        assertEquals("ai.kilocode.jetbrains.settings.marketplace", page(OpenMarketplaceSettingsAction()))
+        // Nothing visited yet, so the resuming entry falls back to the profile page.
+        assertEquals("ai.kilocode.jetbrains.settings.profile", page(OpenSettingsAction()))
+
+        // Restored afterwards: this is project-wide state other tests read too.
+        val props = PropertiesComponent.getInstance(project)
+        val previous = props.getValue(KiloSettingsSelection.SELECTED_CONFIGURABLE_KEY)
+        props.setValue(KiloSettingsSelection.SELECTED_CONFIGURABLE_KEY, MarketplaceConfigurable.ID)
+        try {
+            assertEquals(MarketplaceConfigurable.ID, page(OpenSettingsAction()))
+            // A shortcut still goes to its own page regardless of where the user last was.
+            assertEquals("ai.kilocode.jetbrains.settings.profile", page(OpenUserProfileSettingsAction()))
+        } finally {
+            props.setValue(KiloSettingsSelection.SELECTED_CONFIGURABLE_KEY, previous)
+        }
+    }
+
+    fun `test settings shortcuts have menu text and resolve their page off the EDT`() {
+        for (action in listOf(OpenUserProfileSettingsAction(), OpenMarketplaceSettingsAction(), OpenSettingsAction())) {
+            // Resolving the page reads project state, so it must not be forced onto the EDT.
+            assertEquals(action.javaClass.simpleName, ActionUpdateThread.BGT, action.actionUpdateThread)
+        }
+        assertEquals("User Profile...", event(OpenUserProfileSettingsAction()).presentation.text)
+        assertEquals("Marketplace...", event(OpenMarketplaceSettingsAction()).presentation.text)
+        assertEquals("Open Settings...", event(OpenSettingsAction()).presentation.text)
+    }
+
+    /** Passes a workspace so the data context carries the project the action reads state from. */
+    private fun page(action: OpenSettingsPageAction): String =
+        action.page(event(action, workspace("/tmp/kilo-settings-shortcuts")))
 
     fun `test core info action shows version and architecture`() {
         appRpc.cliVersion = "1.2.3"
@@ -124,6 +313,21 @@ class KiloRecoveryActionsTest : BasePlatformTestCase() {
         assertFalse(event.presentation.isEnabled)
         assertTrue(event.presentation.isVisible)
         assertEquals("Core v1.2.3 • Architecture: darwin-arm64", event.presentation.text)
+    }
+
+    fun `test core info action marks bundled core`() {
+        appRpc.cliVersion = "1.2.3"
+        appRpc.cliPlatform = "darwin-arm64"
+        appRpc.cliBundled = true
+        ApplicationManager.getApplication().executeOnPooledThread {
+            runBlocking { app().coreInfo() }
+        }.get()
+        val action = CoreInfoAction()
+        val event = event(action)
+
+        update(action, event)
+
+        assertEquals("Bundled Core v1.2.3 • Architecture: darwin-arm64", event.presentation.text)
     }
 
     fun `test local config action says open when target exists`() {
@@ -287,6 +491,97 @@ class KiloRecoveryActionsTest : BasePlatformTestCase() {
         assertEquals(0, rpc.localConfigPathCalls)
     }
 
+    fun `test setup script action keeps the common label for existing and missing scripts`() {
+        val action = OpenSetupScriptAction()
+        val facade = FakeAgentManagerFacade().apply { enabled = setOf(AgentManagerCommand.SHOW_SETUP) }
+        val element = AgentManagerElement.Local(WorktreeDto("/test/feature", "feature", "feature", "/test/feature"))
+        listOf(true, false).forEach { exists ->
+            service().setupScript["/test"] = SetupScriptTargetDto("/test/.kilo/setup-script", "~/.kilo/setup-script", exists)
+            val event = event(action, workspace = workspace("/test"), facade = facade, element = element)
+
+            update(action, event)
+
+            assertTrue(event.presentation.isEnabledAndVisible)
+            assertEquals(KiloBundle.message("action.Kilo.OpenSetupScript.text"), event.presentation.text)
+        }
+        assertEquals(2, facade.queries.size)
+        assertTrue(rpc.setupScriptTargetCalls.isEmpty())
+    }
+
+    fun `test setup script action queries the facade on EDT without resolving a script`() {
+        val action = OpenSetupScriptAction()
+        val facade = FakeAgentManagerFacade().apply { enabled = setOf(AgentManagerCommand.SHOW_SETUP) }
+        val element = AgentManagerElement.Local(WorktreeDto("/test/feature", "feature", "feature", "/test/feature"))
+        val event = event(action, facade = facade, element = element)
+
+        update(action, event)
+
+        assertTrue(event.presentation.isEnabledAndVisible)
+        assertEquals(ActionUpdateThread.EDT, action.actionUpdateThread)
+        assertSame(element, facade.queries.single().first)
+        assertEquals(AgentManagerCommand.SHOW_SETUP, facade.queries.single().second)
+        assertTrue(rpc.setupScriptTargetCalls.isEmpty())
+    }
+
+    fun `test setup script action requires manager context instead of a workspace directory`() {
+        val action = OpenSetupScriptAction()
+        val event = event(action, workspace = workspace("/test"))
+
+        update(action, event)
+        edtWait { action.actionPerformed(event) }
+
+        assertFalse(event.presentation.isEnabledAndVisible)
+        assertEquals(0, rpc.setupScriptTargetCalls.size)
+    }
+
+    fun `test setup script action respects facade exclusion of the main worktree`() {
+        val action = OpenSetupScriptAction()
+        val facade = FakeAgentManagerFacade().apply {
+            overrides[AgentManagerCommand.SHOW_SETUP] = AgentManagerAvailability.HIDDEN
+        }
+        val element = AgentManagerElement.Local(WorktreeDto("/test", "main", "main", "/test", main = true))
+        val event = event(action, facade = facade, element = element)
+
+        update(action, event)
+        edtWait { action.actionPerformed(event) }
+
+        assertFalse(event.presentation.isEnabledAndVisible)
+        assertTrue(facade.queries.all { it.first === element && it.second == AgentManagerCommand.SHOW_SETUP })
+        assertTrue(facade.calls.isEmpty())
+    }
+
+    fun `test setup script action respects facade exclusion of Cloud without local lookups`() {
+        val action = OpenSetupScriptAction()
+        val facade = FakeAgentManagerFacade().apply {
+            overrides[AgentManagerCommand.SHOW_SETUP] = AgentManagerAvailability.HIDDEN
+        }
+        val element = AgentManagerElement.Cloud(HostedWorkspaceDto(HostedWorkspaceRefDto("cloud", "one")))
+        val event = event(action, workspace = workspace("/test"), facade = facade, element = element)
+
+        update(action, event)
+        edtWait { action.actionPerformed(event) }
+
+        assertFalse(event.presentation.isEnabledAndVisible)
+        assertTrue(facade.queries.all { it.first === element && it.second == AgentManagerCommand.SHOW_SETUP })
+        assertTrue(facade.calls.isEmpty())
+        assertTrue(rpc.setupScriptTargetCalls.isEmpty())
+    }
+
+    fun `test setup script action dispatches the captured element through the facade`() {
+        val action = OpenSetupScriptAction()
+        val facade = FakeAgentManagerFacade().apply { enabled = setOf(AgentManagerCommand.SHOW_SETUP) }
+        val element = AgentManagerElement.Local(WorktreeDto("/test/feature", "feature", "feature", "/test/feature"))
+        val event = event(action, facade = facade, element = element)
+
+        update(action, event)
+        edtWait { action.actionPerformed(event) }
+
+        assertTrue(event.presentation.isEnabledAndVisible)
+        assertSame(element, facade.calls.single().element)
+        assertEquals(AgentManagerCommand.SHOW_SETUP, facade.calls.single().command)
+        assertTrue(rpc.setupScriptTargetCalls.isEmpty())
+    }
+
     fun `test settings popup group updates recursively in background`() {
         val group = DefaultActionGroup()
         val wrapped = KiloSettingsAction.popupGroup(group)
@@ -303,6 +598,7 @@ class KiloRecoveryActionsTest : BasePlatformTestCase() {
 
         assertEquals(1, rpc.localConfigPathCalls)
         assertEquals(1, rpc.globalConfigPathCalls)
+        assertEquals(0, rpc.setupScriptTargetCalls.size)
     }
 
     fun `test workspace creation prewarms config targets`() {
@@ -319,13 +615,23 @@ class KiloRecoveryActionsTest : BasePlatformTestCase() {
         assertEquals(1, rpc.globalConfigPathCalls)
     }
 
-    private fun event(action: AnAction, workspace: Workspace? = null, place: String = ""): AnActionEvent {
+    private fun event(
+        action: AnAction,
+        workspace: Workspace? = null,
+        place: String = "",
+        facade: AgentManagerFacade? = null,
+        element: AgentManagerElement? = null,
+    ): AnActionEvent {
         val presentation = Presentation().apply { copyFrom(action.templatePresentation) }
         presentation.isEnabled = false
-        return AnActionEvent.createFromDataContext(place, presentation, context(workspace))
+        return AnActionEvent.createFromDataContext(place, presentation, context(workspace, facade, element))
     }
 
     private fun update(action: AnAction, event: AnActionEvent) {
+        if (action.actionUpdateThread == ActionUpdateThread.EDT) {
+            edtWait { ActionUtil.updateAction(action, event) }
+            return
+        }
         ApplicationManager.getApplication().executeOnPooledThread {
             ActionUtil.updateAction(action, event)
         }.get()
@@ -345,11 +651,13 @@ class KiloRecoveryActionsTest : BasePlatformTestCase() {
         field.set(service(), target)
     }
 
-    private fun context(workspace: Workspace?): DataContext {
+    private fun context(workspace: Workspace?, facade: AgentManagerFacade?, element: AgentManagerElement?): DataContext {
         return DataContext { id ->
             when (id) {
                 SessionManager.WORKSPACE_KEY.name -> workspace
                 CommonDataKeys.PROJECT.name -> project.takeIf { workspace != null }
+                AgentManagerKeys.FACADE.name -> facade
+                AgentManagerKeys.ELEMENT.name -> element
                 else -> null
             }
         }

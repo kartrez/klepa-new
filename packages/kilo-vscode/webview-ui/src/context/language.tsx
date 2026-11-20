@@ -6,9 +6,9 @@
  * Locale priority: user override → VS Code display language → browser language → "ru"
  */
 
-import { createSignal, createMemo, createEffect, ParentComponent, Accessor } from "solid-js"
-import { I18nProvider } from "@kilocode/kilo-ui/context"
-import type { UiI18nKey, UiI18nParams } from "@kilocode/kilo-ui/context"
+import { createSignal, createMemo, createEffect, onCleanup, ParentComponent, Accessor } from "solid-js"
+import { I18nProvider, pluralCategory, pluralKey } from "@kilocode/kilo-ui/context"
+import type { UiI18nKey, UiI18nParams, UiI18nPluralKey } from "@kilocode/kilo-ui/context"
 import { dict as uiEn } from "@kilocode/kilo-ui/i18n/en"
 import { dict as uiRu } from "@kilocode/kilo-ui/i18n/ru"
 import { dict as appEn } from "../i18n/en"
@@ -34,10 +34,11 @@ export const LOCALE_LABELS: Record<Locale, string> = {
   ru: "Русский",
 }
 
-const baseEn = { ...appEn, ...uiEn, ...kiloEn }
+const base = { ...appEn, ...uiEn, ...kiloEn }
+const english: Record<string, string> = { ...base, ...amEn }
 const dicts: Record<Locale, Record<string, string>> = {
-  en: { ...baseEn, ...amEn },
-  ru: { ...baseEn, ...appRu, ...uiRu, ...kiloRu, ...amRu },
+  en: english,
+  ru: { ...base, ...appRu, ...uiRu, ...kiloRu, ...amEn, ...amRu },
 }
 
 function normalizeLocale(lang: string): Locale {
@@ -88,9 +89,11 @@ export const LanguageProvider: ParentComponent<LanguageProviderProps> = (props) 
   })
 
   const t = (key: UiI18nKey, params?: UiI18nParams) => {
-    const text = (dict() as Record<string, string>)[key] ?? (dicts.en as Record<string, string>)[key] ?? String(key)
+    const text = dict()[key] ?? english[key] ?? String(key)
     return resolveTemplate(text, params)
   }
+  const plural = (key: UiI18nPluralKey, count: number, params?: UiI18nParams) =>
+    t(pluralKey(key, pluralCategory(localeToBcp47(locale()), count)), { ...params, count })
 
   const setLocale = (next: Locale | "") => {
     setUserOverride(next)
@@ -101,7 +104,9 @@ export const LanguageProvider: ParentComponent<LanguageProviderProps> = (props) 
     <LanguageContext.Provider
       value={{ locale, setLocale, userOverride, t: t as (key: string, params?: UiI18nParams) => string }}
     >
-      <I18nProvider value={{ locale: () => locale(), t }}>{props.children}</I18nProvider>
+      {/* Shared UI formats dates and numbers with Intl from this value, so it
+          must be a BCP-47 tag (Kilo's "zht" is not one). */}
+      <I18nProvider value={{ locale: () => localeToBcp47(locale()), t, plural }}>{props.children}</I18nProvider>
     </LanguageContext.Provider>
   )
 }

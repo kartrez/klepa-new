@@ -3,6 +3,8 @@ import { describe, expect, it, mock } from "bun:test"
 const { AgentManagerProvider } = await import("../../src/agent-manager/AgentManagerProvider")
 
 type Manager = {
+  projectScope: { current: () => unknown; run: (ctx: unknown, fn: () => unknown) => unknown }
+  contexts: { active: () => unknown }
   connectionService: { getClient: () => unknown }
   panel: {
     postMessage: (message: unknown) => void
@@ -61,19 +63,30 @@ function createManager(options?: { dir?: string; panelDir?: string; state?: bool
   manager.getRoot = () => "/repo"
   manager.pushState = mock(() => undefined)
   manager.log = mock(() => undefined)
+  const ctx = {
+    peekState: () => (options?.state === false ? undefined : state),
+    root: "/repo",
+    stale: new Set<string>(),
+    worktreeManager: () => ({}),
+  }
+  manager.projectScope = { current: () => ctx, run: (_: unknown, fn: () => unknown) => fn() }
+  manager.contexts = { active: () => ctx }
 
   return { manager, stopped, aborted, cleared, removed, messages, events }
 }
 
 describe("AgentManagerProvider closeSession", () => {
-  it("aborts the agent before stopping processes and removing its tab", async () => {
+  // The session leaves Agent Manager state before its processes are stopped:
+  // process shutdown can be slow, and a state push that still listed the closed
+  // session would restore the tab the user just closed.
+  it("aborts the agent, drops the tab, then stops its processes", async () => {
     const { manager, stopped, aborted, cleared, removed, messages, events } = createManager({ dir: "/repo/worktree" })
 
     await manager.onCloseSession("s1")
 
     expect(aborted).toEqual([["s1"]])
     expect(stopped).toEqual([{ sessionID: "s1", directory: "/repo/worktree" }])
-    expect(events).toEqual(["abort", "processes", "remove"])
+    expect(events).toEqual(["abort", "remove", "processes"])
     expect(removed).toEqual(["s1"])
     expect(cleared).toEqual(["s1"])
     expect(messages).toEqual([])

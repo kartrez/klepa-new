@@ -1,5 +1,6 @@
 package ai.kilocode.client.session.ui.popup
 
+import ai.kilocode.client.plugin.KiloPluginSettings
 import ai.kilocode.client.session.model.Content
 import ai.kilocode.client.session.views.base.PartView
 import ai.kilocode.client.testing.TestUiTimers
@@ -25,8 +26,31 @@ class HeaderPopupControllerTest : BasePlatformTestCase() {
         } finally {
             controllers.clear()
             views.clear()
+            KiloPluginSettings.unsetHoverPreview()
             super.tearDown()
         }
+    }
+
+    fun `test disabled hover preview does not schedule a popup`() {
+        KiloPluginSettings.setHoverPreview(false)
+        val controller = controller()
+        val view = view()
+
+        controller.show(view)
+        timers.advanceBy(500)
+
+        assertNull(guard(controller))
+        assertNull(target(controller))
+        assertEquals(0, view.requests)
+    }
+
+    fun `test hover preview is enabled by default`() {
+        val controller = controller()
+        val view = view()
+
+        controller.show(view)
+
+        assertNotNull(guard(controller))
     }
 
     fun `test guard is disposed between repeated hover cycles`() {
@@ -86,10 +110,18 @@ class HeaderPopupControllerTest : BasePlatformTestCase() {
 
     private fun target(controller: HeaderPopupController): PartView? = field(controller, "target")
 
+    /**
+     * Reads lifecycle state out of the shared [SidePopupController] the chat adapter delegates to. These
+     * tests stay on the chat entry points deliberately — they assert that hovering and exiting a card
+     * leaves no guard behind, which is a property of the pair rather than of either half.
+     */
     private inline fun <reified T> field(controller: HeaderPopupController, name: String): T? {
-        val field = HeaderPopupController::class.java.getDeclaredField(name)
+        val delegate = HeaderPopupController::class.java.getDeclaredField("popup")
+        delegate.isAccessible = true
+        val inner = delegate.get(controller)
+        val field = inner.javaClass.getDeclaredField(name)
         field.isAccessible = true
-        return field.get(controller) as? T
+        return field.get(inner) as? T
     }
 
     private class TestView : PartView() {

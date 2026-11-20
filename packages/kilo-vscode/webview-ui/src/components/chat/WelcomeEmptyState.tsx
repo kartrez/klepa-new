@@ -1,17 +1,27 @@
-import { type Component, For, Show } from "solid-js"
+import { type Component, type JSX, For, Show } from "solid-js"
 import { Icon } from "@kilocode/kilo-ui/icon"
 import { useDialog } from "@kilocode/kilo-ui/context/dialog"
 import { useSession } from "../../context/session"
 import { useLanguage } from "../../context/language"
 import { recentSessions } from "../../context/session-utils"
+import type { SessionInfo } from "../../types/messages"
 import { formatRelativeDate } from "../../utils/date"
 import { FeedbackDialog } from "./FeedbackDialog"
+import { WorkspaceScopeHint } from "./WorkspaceScopeHint"
 
 interface WelcomeEmptyStateProps {
+  sessions?: () => SessionInfo[]
   onSelectSession?: (id: string) => void
   onShowHistory?: () => void
+  footer?: JSX.Element
 }
 
+/**
+ * Square Kilo mark. Hover rotates the mark and crossfades to the yellow Lottie animation,
+ * matching Kilo Cloud's header logo. The player mounts on first hover so the WASM renderer
+ * never delays the empty state; the static mark stays visible until the player can draw, so a
+ * slow or failed load never leaves an empty square.
+ */
 export const KiloLogo = () => {
   const icons = (window as { ICONS_BASE_URI?: string }).ICONS_BASE_URI || ""
   const light =
@@ -29,12 +39,13 @@ export const WelcomeEmptyState: Component<WelcomeEmptyStateProps> = (props) => {
   const session = useSession()
   const language = useLanguage()
   const dialog = useDialog()
-  const recent = () => recentSessions(session.sessions())
+  const recent = () => recentSessions(props.sessions?.() ?? session.sessions())
 
   return (
     <div class="message-list-empty">
       <KiloLogo />
       <p class="kilo-about-text">{language.t("session.messages.welcome")}</p>
+      <WorkspaceScopeHint />
       <Show when={recent().length > 0 && props.onSelectSession}>
         <div class="recent-sessions">
           <span class="recent-sessions-label">{language.t("session.recent")}</span>
@@ -60,6 +71,7 @@ export const WelcomeEmptyState: Component<WelcomeEmptyStateProps> = (props) => {
         <Icon name="bubble-5" size="small" />
         {language.t("feedback.button")}
       </button>
+      {props.footer}
     </div>
   )
 }

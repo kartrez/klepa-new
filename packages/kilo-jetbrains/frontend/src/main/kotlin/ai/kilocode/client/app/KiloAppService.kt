@@ -8,23 +8,34 @@ import ai.kilocode.rpc.dto.DeviceAuthDto
 import ai.kilocode.rpc.dto.HealthDto
 import ai.kilocode.rpc.dto.KiloAppStateDto
 import ai.kilocode.rpc.dto.KiloAppStatusDto
+import ai.kilocode.rpc.dto.LogConfigDto
+import ai.kilocode.rpc.dto.LogFileDto
 import ai.kilocode.rpc.dto.ModelFavoriteUpdateDto
 import ai.kilocode.rpc.dto.ModelSelectionDto
 import ai.kilocode.rpc.dto.ModelSelectionUpdateDto
 import ai.kilocode.rpc.dto.ModelStateDto
 import ai.kilocode.rpc.dto.ModelVariantUpdateDto
 import ai.kilocode.rpc.dto.ProfileDto
+import ai.kilocode.rpc.dto.RetentionStatusDto
+import ai.kilocode.rpc.dto.RetentionPatchDto
+import ai.kilocode.rpc.dto.SpeechModelDto
+import ai.kilocode.rpc.dto.SpeechRequestDto
 import ai.kilocode.rpc.dto.ProfileStatusDto
 import ai.kilocode.log.KiloLog
+import ai.kilocode.client.settings.KiloLogSettingsService
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.service
 import fleet.rpc.client.durable
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * App-level frontend service for Kilo Core interaction.
@@ -43,9 +54,12 @@ class KiloAppService internal constructor(
     companion object {
         private val LOG = KiloLog.create(KiloAppService::class.java)
         private val init = KiloAppStateDto(KiloAppStatusDto.DISCONNECTED)
+        private const val DEFAULT_SPEECH_MODEL = "openai/whisper-1"
     }
 
     private val started = AtomicBoolean(false)
+    @Volatile
+    private var speechModel: String? = null
 
     /** Core version and platform from the backend, or null if unknown. */
     @Volatile
@@ -57,6 +71,18 @@ class KiloAppService internal constructor(
     val core: CoreInfo? get() = info
 
     val version: String? get() = info?.version
+
+    /**
+     * Whether the running Core is bundled in the plugin (true) or downloaded (false).
+     * Null until fetched. This is a static property of the plugin build, so it is
+     * fetched once via RPC independently of the download-progress state.
+     */
+    @Volatile
+    private var bundledFlag: Boolean? = null
+    private val bundledLock = Any()
+    private var bundledJob: Job? = null
+
+    val bundled: Boolean? get() = bundledFlag
 
     /**
      * App-lifetime scope for fire-and-forget work that must outlive transient UIs such as the
@@ -95,7 +121,18 @@ class KiloAppService internal constructor(
         val platform = state.downloadPlatform
         if (version != null && platform != null) info = CoreInfo(version, platform)
         _state.value = state
-        if (state.status == KiloAppStatusDto.READY) refreshModelFavoritesAsync()
+        if (state.status == KiloAppStatusDto.READY) {
+            refreshModelFavoritesAsync()
+            service<KiloLogSettingsService>().apply(this)
+        }
+    }
+
+    /** Read the backend diagnostic log file for download in split mode. Null when absent or on failure. */
+    suspend fun backendLog(): LogFileDto? = try {
+        call { backendLogFile() }
+    } catch (e: Exception) {
+        LOG.warn("backend log fetch failed", e)
+        null
     }
 
     /** One-shot health check. Returns null on failure. */
@@ -104,6 +141,33 @@ class KiloAppService internal constructor(
     } catch (e: Exception) {
         LOG.warn("health check failed", e)
         null
+    }
+
+    suspend fun transcriptionModels(directory: String?): List<SpeechModelDto> =
+        call { transcriptionModels(directory) }
+
+    suspend fun transcribe(directory: String?, data: ByteArray): String {
+        val model = model(directory)
+        return call {
+            transcribe(directory, SpeechRequestDto(data = data, model = model)).text
+        }
+    }
+
+    private suspend fun model(directory: String?): String {
+        speechModel?.let { return it }
+        val models = try {
+            transcriptionModels(directory)
+        } catch (err: CancellationException) {
+            throw err
+        } catch (err: Exception) {
+            LOG.warn("speech model discovery failed; using default", err)
+            return DEFAULT_SPEECH_MODEL
+        }
+        val model = models.firstOrNull { it.id == DEFAULT_SPEECH_MODEL }?.id
+            ?: models.firstOrNull()?.id
+            ?: return DEFAULT_SPEECH_MODEL
+        speechModel = model
+        return model
     }
 
     suspend fun retry() {
@@ -152,6 +216,7 @@ class KiloAppService internal constructor(
             platform = call { cliPlatform() },
         )
         info = next
+        bundledFlag = call { cliBundled() }
         next
     } catch (e: Exception) {
         LOG.warn("core info failed", e)
@@ -198,6 +263,26 @@ class KiloAppService internal constructor(
     /** Fetch the pinned Core version and cache it. */
     fun fetchVersionAsync(done: (String?) -> Unit = {}) {
         fetchCoreInfoAsync { done(it?.version) }
+    }
+
+    /** Fetch whether the running Core is bundled and cache it. Deduped and fetched once. */
+    fun fetchBundledAsync() {
+        if (bundledFlag != null) return
+        synchronized(bundledLock) {
+            if (bundledFlag != null || bundledJob != null) return
+            bundledJob = cs.launch {
+                val value = try {
+                    call { cliBundled() }
+                } catch (e: Exception) {
+                    LOG.warn("core bundled check failed", e)
+                    null
+                }
+                synchronized(bundledLock) {
+                    if (value != null) bundledFlag = value
+                    bundledJob = null
+                }
+            }
+        }
     }
 
     fun refreshModelFavoritesAsync() {
@@ -270,6 +355,9 @@ class KiloAppService internal constructor(
         }
     }
 
+    /** Effective telemetry level reported by the connected CLI. */
+    fun telemetryConfig(): Boolean? = _state.value.config?.telemetry
+
     suspend fun updateConfig(patch: ConfigPatchDto): KiloAppStateDto? = try {
         LOG.info("config update: sending RPC ${summary(patch)}")
         val next = call { updateConfig(patch) }
@@ -281,12 +369,102 @@ class KiloAppService internal constructor(
         null
     }
 
+    private suspend fun setTelemetryLevel(enabled: Boolean): Boolean = try {
+        val next = call { setTelemetryLevel(enabled) }
+        _state.value = next
+        true
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        LOG.warn("telemetry level update failed", e)
+        false
+    }
+
     fun updateConfigAsync(
         patch: ConfigPatchDto,
         done: (KiloAppStateDto?) -> Unit,
     ): Job = cs.launch {
         val state = updateConfig(patch)
         done(state)
+    }
+
+    suspend fun retentionStatus(): RetentionStatusDto? = try {
+        call { fetchRetention() }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        LOG.warn("Session cleanup status failed", e)
+        null
+    }
+
+    suspend fun runRetention(force: Boolean): RetentionStatusDto? = try {
+        call { triggerRetention(force) }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        LOG.warn("Session cleanup run failed", e)
+        null
+    }
+
+    fun runRetentionAsync(force: Boolean, done: (RetentionStatusDto?) -> Unit): Job = cs.launch {
+        done(runRetention(force))
+    }
+
+    /** Run cleanup once without leaving automatic retention enabled when the saved policy is off. */
+    suspend fun runManualRetention(policy: RetentionPatchDto): RetentionStatusDto? {
+        if (policy.enabled == true) return runRetention(true)
+        val enabled = policy.copy(enabled = true)
+        if (updateConfig(ConfigPatchDto(retention = enabled)) == null) return null
+        return try {
+            runRetention(true)
+        } finally {
+            withContext(NonCancellable) {
+                updateConfig(ConfigPatchDto(retention = policy.copy(enabled = false)))
+            }
+        }
+    }
+
+    fun runManualRetentionAsync(
+        policy: RetentionPatchDto,
+        done: (RetentionStatusDto?) -> Unit,
+    ): Job = cs.launch {
+        done(runManualRetention(policy))
+    }
+
+    fun applyLogConfigAsync(config: LogConfigDto): Job = cs.launch {
+        try {
+            call { applyLogConfig(config) }
+        } catch (e: Exception) {
+            LOG.warn("log config apply failed", e)
+        }
+    }
+
+    /** Whether Kilo-managed worktrees under `.kilo/worktrees` are indexed by their containing project. */
+    suspend fun indexWorktrees(): Boolean = try {
+        call { indexWorktrees() }
+    } catch (e: Exception) {
+        LOG.warn("index worktrees read failed", e)
+        false
+    }
+
+    /** Persist telemetry consent through the CLI on the app scope, even if settings closes. */
+    fun setTelemetryLevelAsync(
+        enabled: Boolean,
+        done: (Boolean) -> Unit,
+    ): Job = cs.launch {
+        done(setTelemetryLevel(enabled))
+    }
+
+    /**
+     * Persist the worktree-indexing setting and reindex every open project. Runs on the app-lifetime
+     * [scope] so the write and the reindex it triggers survive the settings dialog closing on OK.
+     */
+    fun setIndexWorktreesAsync(value: Boolean): Job = cs.launch {
+        try {
+            call { setIndexWorktrees(value) }
+        } catch (e: Exception) {
+            LOG.warn("index worktrees apply failed", e)
+        }
     }
 
     private fun setModelState(state: ModelStateDto) {
@@ -360,6 +538,7 @@ class KiloAppService internal constructor(
     }
 
     private fun setProfile(profile: ProfileDto?) {
+        speechModel = null
         val current = _state.value
         val progress = current.progress?.copy(
             profile = if (profile == null) ProfileStatusDto.NOT_LOGGED_IN else ProfileStatusDto.LOADED,
@@ -367,6 +546,9 @@ class KiloAppService internal constructor(
         _state.value = current.copy(profile = profile, progress = progress)
     }
 }
+
+private suspend fun KiloAppRpcApi.fetchRetention(): RetentionStatusDto = retentionStatus()
+private suspend fun KiloAppRpcApi.triggerRetention(force: Boolean): RetentionStatusDto = runRetention(force)
 
 data class CoreInfo(val version: String, val platform: String)
 

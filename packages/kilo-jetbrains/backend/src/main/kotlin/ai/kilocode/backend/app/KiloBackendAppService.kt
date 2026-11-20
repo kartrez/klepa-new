@@ -14,11 +14,11 @@ import ai.kilocode.jetbrains.api.infrastructure.ClientError
 import ai.kilocode.jetbrains.api.infrastructure.ClientException
 import ai.kilocode.jetbrains.api.infrastructure.ServerError
 import ai.kilocode.jetbrains.api.infrastructure.ServerException
-import ai.kilocode.jetbrains.api.model.ConfigWarnings200ResponseInner
 import ai.kilocode.jetbrains.api.model.KiloNotifications200ResponseInner
 import ai.kilocode.jetbrains.api.model.KiloProfile200Response
 import ai.kilocode.jetbrains.api.model.ProviderOauthAuthorizeRequest
 import ai.kilocode.jetbrains.api.model.ProviderOauthCallbackRequest
+import ai.kilocode.rpc.dto.ChatEventDto
 import ai.kilocode.rpc.dto.ConfigDto
 import ai.kilocode.rpc.dto.DeviceAuthDto
 import ai.kilocode.rpc.dto.ConfigPatchDto
@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -111,6 +112,7 @@ class KiloBackendAppService private constructor(
     }
 
     private val mutex = Mutex()
+    private val telemetryLock = Mutex()
     private val connection = KiloConnectionService(cs, server, onReconnect = {
         cs.launch { reconnect() }
     }, appLoadTimeoutMs = loadTimeoutMs, log = log)
@@ -128,13 +130,27 @@ class KiloBackendAppService private constructor(
     private val _appState = MutableStateFlow<KiloAppState>(KiloAppState.Disconnected)
     val appState: StateFlow<KiloAppState> = _appState.asStateFlow()
 
+    /**
+     * Whether the connected CLI allows background subagents, from `GET /experimental/capabilities`.
+     *
+     * Deliberately not part of [AppData]: it is a property of the connected CLI rather than loaded
+     * app data, it is probed off the load's critical path, and folding it into [AppData] would churn
+     * that object's identity — which `updateConfig` and [refreshConfigState] use to detect a
+     * concurrent reload, so a late probe would silently cancel a config write.
+     */
+    private val _capabilities = MutableStateFlow(false)
+    val capabilities: StateFlow<Boolean> = _capabilities.asStateFlow()
+
     val events: SharedFlow<SseEvent> get() = connection.events
     val api: DefaultApi? get() = connection.api
     val http: OkHttpClient? get() = connection.apiClient
     val port: Int get() = connection.port
 
     val sessions = KiloBackendSessionManager(cs, log)
+    val retention = KiloBackendRetentionManager(this)
     val chat = KiloBackendChatManager(cs, log)
+    val hosted = KiloBackendHostedManager(cs, log)
+    val activity = KiloBackendActivityManager(cs, log)
     val models = KiloBackendModelStateManager(log)
     val workspaces = KiloBackendWorkspaceManager(cs, sessions, log)
     @Volatile var profile: KiloProfile200Response? = null
@@ -144,9 +160,6 @@ class KiloBackendAppService private constructor(
         private set
 
     @Volatile var notifications: List<KiloNotifications200ResponseInner> = emptyList()
-        private set
-
-    @Volatile var warnings: List<ConfigWarning> = emptyList()
         private set
 
     suspend fun connect() {
@@ -215,15 +228,7 @@ class KiloBackendAppService private constructor(
                     log.info("retry: rerunning migration detection")
                     load()
                 }
-                is KiloAppState.Ready -> {
-                    if (current.data.warnings.isEmpty()) return
-                    log.info("retry: refreshing config warnings")
-                    refreshConfigState()
-                    val next = _appState.value
-                    val warns = (next as? KiloAppState.Ready)?.data?.warnings
-                    if (next is KiloAppState.Ready && warns.isNullOrEmpty()) return
-                    restartConnection("warnings remained after refresh")
-                }
+                is KiloAppState.Ready -> Unit
                 is KiloAppState.Error -> {
                     val load = current.errors.none { it.resource == "connection" }
                     if (load && connection.api != null) {
@@ -231,8 +236,7 @@ class KiloBackendAppService private constructor(
                         val prev = _appState.value
                         load()
                         val next = awaitLoadResult(prev)
-                        val warns = (next as? KiloAppState.Ready)?.data?.warnings
-                        if (next is KiloAppState.Ready && warns.isNullOrEmpty()) return
+                        if (next is KiloAppState.Ready) return
                         restartConnection("state remained problematic after load retry")
                         return
                     }
@@ -303,14 +307,19 @@ class KiloBackendAppService private constructor(
             log.warn("Global config patch: config reload failed after save $summary")
             return (_appState.value as? KiloAppState.Ready) ?: current
         }
-        val warns = fetchWarnings()
-        val state = _appState.value
-        if (state is KiloAppState.Ready && state.data === current.data && connection.state.value == connected) {
-            config = cfg
-            setAppReady(current.data.copy(config = cfg, warnings = warns))
-        }
+        publishConfig(connected, current.data, cfg)
         log.info("Global config patch: state refreshed $summary")
         return (_appState.value as? KiloAppState.Ready) ?: current
+    }
+
+    suspend fun setTelemetryLevel(enabled: Boolean): KiloAppState = telemetryLock.withLock {
+        val connected = connection.state.value as? ConnectionState.Connected ?: throw IllegalStateException("Not connected")
+        val http = connection.apiClient ?: throw IllegalStateException("Not connected")
+        requireReady()
+        val level = KiloBackendTelemetry(log).setLevel(http, connected.port, enabled)
+        log.info("Telemetry level saved: requested=$enabled effective=$level")
+        publishTelemetry(connected, level)
+        _appState.value
     }
 
     internal suspend fun resumeAfterMigration() {
@@ -347,8 +356,15 @@ class KiloBackendAppService private constructor(
         if (watcher?.isActive == true) return
         watcher = cs.launch {
             connection.state.collect { next ->
+                if (preservesMigration(_appState.value, next)) {
+                    log.info("Connection ${next::class.simpleName} while migration pending — keeping migration wizard")
+                    return@collect
+                }
                 when (next) {
-                    ConnectionState.Disconnected -> _appState.value = KiloAppState.Disconnected
+                    ConnectionState.Disconnected -> {
+                        _capabilities.value = false
+                        _appState.value = KiloAppState.Disconnected
+                    }
                     is ConnectionState.Downloading -> _appState.value = KiloAppState.Downloading(next.percent, next.version, next.platform)
                     ConnectionState.Connecting -> _appState.value = KiloAppState.Connecting
                     is ConnectionState.Connected -> {
@@ -391,7 +407,6 @@ class KiloBackendAppService private constructor(
                     profile = null
                     config = null
                     notifications = emptyList()
-                    warnings = emptyList()
                     _appState.value = KiloAppState.MigrationRequired(migration)
                     log.info("Application paused — legacy migration required")
                     return@launch
@@ -401,7 +416,6 @@ class KiloBackendAppService private constructor(
                 var cfg: ConfigDto? = null
                 var prof: KiloProfile200Response? = null
                 var notifs: List<KiloNotifications200ResponseInner> = emptyList()
-                var warns: List<ConfigWarning> = emptyList()
 
                 try {
                     withTimeout(loadTimeoutMs) {
@@ -449,8 +463,6 @@ class KiloBackendAppService private constructor(
                         }
                     }
 
-                    warns = fetchWarnings()
-
                     ensureActive()
                     profile = prof
                     config = cfg
@@ -458,13 +470,13 @@ class KiloBackendAppService private constructor(
                     models.start(connection.apiClient!!, connection.port)
                     sessions.start(connection.api!!, connection.apiClient!!, connection.port, connection.events)
                     chat.start(connection.apiClient!!, connection.port, connection.events)
+                    hosted.start(connection.api!!, connection.apiClient!!, connection.port, chat)
+                    activity.start(sessions.statuses, { id -> hosted.directory(id) ?: sessions.sessionDirectory(id) }, chat.events)
                     workspaces.start(connection.api!!, connection.apiClient!!, connection.port, connection.events)
                     startWatchingGlobalSseEvents()
-                    setTelemetry(true)
                     captureBackend("Backend Connected", mapOf("portKnown" to "true"))
                     captureLoad("Backend Load Completed", start, mapOf(
                         "profileStatus" to if (prof != null) "loaded" else "not_logged_in",
-                        "warningCount" to warns.size.toString(),
                         "migrationRequired" to "false",
                     ))
                     setAppReady(
@@ -472,14 +484,20 @@ class KiloBackendAppService private constructor(
                             profile = prof,
                             config = cfg!!,
                             notifications = notifs,
-                            warnings = warns,
                         )
                     )
                     log.info(
                         "Application snapshot: profile=${if (prof != null) "loaded" else "not_logged_in"} " +
-                            "warnings=${warns.size} notifications=${notifs.size} ${configSummary(cfg)}",
+                            "notifications=${notifs.size} ${configSummary(cfg)}",
                     )
                     log.info("Application started — config, profile, notifications loaded")
+                    // Off the critical path on purpose: this is an optional probe, and the generated
+                    // client's call is blocking, so a timeout inside the load's coroutineScope could
+                    // not actually release it — structured concurrency would still wait for the
+                    // socket and fail an otherwise-successful load. Ready therefore starts with the
+                    // capability off and flips once the probe answers.
+                    cs.launch { refreshCapabilities() }
+                    cs.launch { refreshTelemetry() }
                 } catch (e: TimeoutCancellationException) {
                     val err = LoadError(
                         resource = "app",
@@ -526,16 +544,6 @@ class KiloBackendAppService private constructor(
                     props + mapOf("durationMs" to (System.currentTimeMillis() - start).toString()),
                 )
             }.onFailure { log.info("Skipping backend load telemetry: ${it.message}") }
-        }
-    }
-
-    private fun setTelemetry(enabled: Boolean) {
-        val http = connection.apiClient
-        val port = connection.port
-        cs.launch {
-            runCatching {
-                service<KiloBackendTelemetry>().setEnabled(http, port, enabled)
-            }.onFailure { log.info("Skipping telemetry setEnabled: ${it.message}") }
         }
     }
 
@@ -591,9 +599,8 @@ class KiloBackendAppService private constructor(
      * on success, [FetchResult.ok] with `null` when not logged in or when
      * the server cannot reach the profile endpoint. Never throws.
      *
-     * Profile is optional — 401 (not logged in) and 5xx (gateway/network
-     * errors) are both non-fatal. Only unexpected client errors are treated
-     * as failures.
+     * Profile is optional — 401 (not logged in), 400 (missing/corrupt local
+     * auth), and 5xx (gateway/network errors) are all non-fatal.
      */
     private suspend fun fetchProfile(): FetchResult<KiloProfile200Response?> {
         val client = connection.appLoadApi
@@ -603,8 +610,9 @@ class KiloBackendAppService private constructor(
             log.info("Profile: ${response.profile.email}")
             FetchResult.ok(response)
         } catch (e: ClientException) {
-            if (e.statusCode == 401) {
-                log.info("Profile: not logged in (401)")
+            if (e.statusCode == 400 || e.statusCode == 401) {
+                log.info("Profile: unavailable (${e.statusCode})")
+                logResponseBody("profile", e)
                 return FetchResult.ok(null)
             }
             log.warn("Profile fetch failed: HTTP ${e.statusCode}", e)
@@ -672,42 +680,82 @@ class KiloBackendAppService private constructor(
         }
     }
 
-    private suspend fun fetchWarnings(): List<ConfigWarning> {
-        val client = connection.appLoadApi ?: return emptyList()
+    /**
+     * Reads the CLI's background-subagent capability. Returns false when it cannot be read — an older
+     * CLI has no `/experimental/capabilities` route at all — which matches VS Code's
+     * `data?.backgroundSubagents === true` fallback and hides the affordance rather than offering one
+     * that would fail.
+     *
+     * Called off the load's critical path — see the call site in the start flow.
+     */
+    private suspend fun fetchCapabilities(): Boolean {
+        val client = connection.appLoadApi ?: return false
         return try {
-            client.configWarnings().map(::warning)
+            withContext(Dispatchers.IO) { client.experimentalCapabilitiesGet().backgroundSubagents }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            log.warn("Config warnings fetch failed: ${e.message}", e)
-            emptyList()
+            log.warn("Experimental capabilities fetch failed: ${e.message}", e)
+            false
         }
     }
 
-    private fun warning(w: ConfigWarnings200ResponseInner) = ConfigWarning(
-        path = w.path,
-        message = w.message,
-        detail = w.detail,
-    )
+    /**
+     * Publishes the probe result into [capabilities], ignoring a late answer that arrives after the
+     * connection changed under us.
+     */
+    private suspend fun refreshCapabilities() {
+        val conn = connection.state.value as? ConnectionState.Connected ?: return
+        val enabled = fetchCapabilities()
+        if (connection.state.value != conn) return
+        _capabilities.value = enabled
+    }
+
+    private suspend fun refreshTelemetry() = telemetryLock.withLock {
+        val conn = connection.state.value as? ConnectionState.Connected ?: return@withLock
+        val http = connection.apiClient ?: return@withLock
+        val level = try {
+            KiloBackendTelemetry(log).level(http, conn.port)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("Could not read effective telemetry level: ${e.message}", e)
+            null
+        }
+        publishTelemetry(conn, level)
+    }
+
+    private fun publishTelemetry(conn: ConnectionState.Connected, level: Boolean?) {
+        synchronized(loadLock) {
+            val state = _appState.value as? KiloAppState.Ready ?: return
+            if (connection.state.value != conn || state.data.config.telemetry == level) return
+            val cfg = state.data.config.copy(telemetry = level)
+            config = cfg
+            setAppReady(state.data.copy(config = cfg))
+        }
+    }
 
     private suspend fun refreshConfigState() {
         val current = _appState.value as? KiloAppState.Ready ?: return
         val connection = connection.state.value as? ConnectionState.Connected ?: return
         val cfg = fetchConfig().value ?: return
-        val warns = fetchWarnings()
-        val state = _appState.value
-        if (state !is KiloAppState.Ready || state.data !== current.data) return
-        if (this.connection.state.value != connection) return
-        config = cfg
-        setAppReady(
-            current.data.copy(
-                config = cfg,
-                warnings = warns,
-            )
-        )
+        publishConfig(connection, current.data, cfg)
+    }
+
+    private fun publishConfig(conn: ConnectionState.Connected?, before: AppData, cfg: ConfigDto) {
+        synchronized(loadLock) {
+            val state = _appState.value as? KiloAppState.Ready ?: return
+            if (connection.state.value != conn) return
+            // A telemetry probe updates the snapshot independently of the global config read.
+            val previous = state.data.config.copy(telemetry = before.config.telemetry)
+            if (state.data.copy(config = previous) != before) return
+            val next = cfg.copy(telemetry = state.data.config.telemetry)
+            config = next
+            setAppReady(state.data.copy(config = next))
+        }
     }
 
     private fun setAppReady(data: AppData) {
-        warnings = data.warnings
-        if (data.warnings.isNotEmpty()) warnAppWarnings(data.warnings)
         _appState.value = KiloAppState.Ready(data, rev.incrementAndGet())
     }
 
@@ -723,20 +771,10 @@ class KiloBackendAppService private constructor(
         log.warn("App error: $text")
     }
 
-    private fun warnAppWarnings(warnings: List<ConfigWarning>) {
-        val text = warnings.joinToString("; ") { warning(it) }
-        log.warn("App warnings: $text")
-    }
-
     private fun error(err: LoadError): String {
         val status = err.status?.let { " status=$it" } ?: ""
         val detail = err.detail?.let { " detail=$it" } ?: ""
         return "${err.resource}$status$detail"
-    }
-
-    private fun warning(warn: ConfigWarning): String {
-        val detail = warn.detail?.let { " detail=$it" } ?: ""
-        return "${warn.path}: ${warn.message}$detail"
     }
 
     private fun configSummary(cfg: ConfigDto): String {
@@ -786,7 +824,7 @@ class KiloBackendAppService private constructor(
                 delay(RETRY_DELAY_MS)
             }
         }
-        log.error("$name: all $MAX_RETRIES attempts failed")
+        log.warn("$name: all $MAX_RETRIES attempts failed${last.error?.let { ": ${error(it)}" } ?: ""}")
         return last
     }
 
@@ -817,16 +855,17 @@ class KiloBackendAppService private constructor(
                             launch {
                                 refreshConfigState()
                                 log.info("Config reloaded successfully")
+                                refreshTelemetry()
                             }
                         }
                         "global.disposed" -> {
-                            logSessionDisposalRisk("global.disposed")
+                            reportDisposal("global.disposed")
                             log.info("SSE global.disposed — triggering full application reload")
                             val current = _appState.value
                             if (current is KiloAppState.Ready) load()
                         }
                         "server.instance.disposed" -> {
-                            logSessionDisposalRisk("server.instance.disposed")
+                            reportDisposal("server.instance.disposed")
                             log.info("SSE server.instance.disposed — triggering full application reload")
                             val current = _appState.value
                             if (current is KiloAppState.Ready) load()
@@ -837,10 +876,22 @@ class KiloBackendAppService private constructor(
         }
     }
 
-    private fun logSessionDisposalRisk(event: String) {
+    /**
+     * Warn, and tell every running session that the CLI is about to cancel it.
+     *
+     * Disposing an instance cancels every runner it owns, and the CLI reports that as the same
+     * `MessageAbortedError` a user Stop produces. Naming the cause here is the only way the UI can
+     * tell the difference and explain itself instead of quietly reporting "Stopped".
+     */
+    private fun reportDisposal(event: String) {
         val active = sessions.statuses.value.filterValues { it.type != "idle" }
         if (active.isEmpty()) return
         log.warn("SSE $event while sessions are active; sessions may be cancelled count=${active.size} statuses=${active.values.map { it.type }.distinct()}")
+        // Badged here rather than off the event below, because the reload that follows this restarts the
+        // activity collector and the event could be dropped in the gap. Both still matter: the badge
+        // marks the worktree row, the event lets the open session name its own reason.
+        activity.interrupt(active.keys)
+        chat.interrupt(active.keys, ChatEventDto.SessionInterrupted.RELOAD)
     }
 
     private suspend fun clear() {
@@ -871,13 +922,15 @@ class KiloBackendAppService private constructor(
         profile = null
         config = null
         notifications = emptyList()
-        warnings = emptyList()
+        _capabilities.value = false
         _appState.value = KiloAppState.Disconnected
     }
 
     private fun stopRuntime() {
         workspaces.stop()
         models.stop()
+        activity.stop()
+        hosted.stop()
         chat.stop()
         sessions.stop()
     }
@@ -890,11 +943,15 @@ class KiloBackendAppService private constructor(
     suspend fun refreshProfile(): KiloProfile200Response? {
         val result = fetchProfile()
         val fresh = result.value
-        val current = _appState.value
-        if (current is KiloAppState.Ready) {
-            setAppReady(current.data.copy(profile = fresh))
+        // Background telemetry and config refreshes also republish Ready. Serialize the
+        // read-modify-write so a late publish cannot restore the snapshot taken before this update.
+        synchronized(loadLock) {
+            val current = _appState.value
+            if (current is KiloAppState.Ready) {
+                setAppReady(current.data.copy(profile = fresh))
+            }
+            profile = fresh
         }
-        profile = fresh
         return fresh
     }
 
@@ -932,10 +989,12 @@ class KiloBackendAppService private constructor(
     suspend fun logout(): Boolean {
         val client = connection.api ?: throw IllegalStateException("Not connected")
         val result = client.authRemove(providerID = "kilo")
-        val current = _appState.value
-        if (current is KiloAppState.Ready) {
-            profile = null
-            setAppReady(current.data.copy(profile = null))
+        synchronized(loadLock) {
+            val current = _appState.value
+            if (current is KiloAppState.Ready) {
+                profile = null
+                setAppReady(current.data.copy(profile = null))
+            }
         }
         return result
     }
@@ -975,6 +1034,7 @@ class KiloBackendAppService private constructor(
         watcher?.cancel()
         watcher = null
         clearNow()
+        hosted.close()
         connection.dispose()
         if (fast) server.closeForShutdown() else server.dispose()
     }
@@ -1044,3 +1104,18 @@ internal fun migrationGate(
     status != null -> MigrationGate.StatusSet
     else -> MigrationGate.Proceed
 }
+
+/**
+ * Whether a connection-state transition must be ignored to keep the migration wizard up.
+ *
+ * A pending migration is a higher-level gate that must survive transient connection churn — for
+ * example a health-check blip that force-reconnects the SSE. Applying [ConnectionState.Connecting],
+ * [ConnectionState.Connected], or [ConnectionState.Error] while [KiloAppState.MigrationRequired]
+ * would flip the app out of the wizard: a reconnect's `Connected` re-runs load(), which hits
+ * `migrationOffered=true` (gate=[MigrationGate.AlreadyOffered]) and drops the app into Ready,
+ * silently dismissing the wizard. Only the user resolving migration (skip/later/finish) leaves the
+ * state, via resumeAfterMigration()/load(). Mirrors the same guard in reconnect().
+ */
+internal fun preservesMigration(appState: KiloAppState, next: ConnectionState): Boolean =
+    appState is KiloAppState.MigrationRequired &&
+        (next == ConnectionState.Connecting || next is ConnectionState.Connected || next is ConnectionState.Error)

@@ -1,3 +1,4 @@
+import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { describe, expect } from "bun:test"
 import path from "path"
 // kilocode_change start
@@ -17,15 +18,17 @@ import { testEffect } from "../lib/effect"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Git } from "@/git"
 import { Filesystem } from "@/util/filesystem"
+import { Config } from "@/config/config" // kilocode_change
 
 const toolLayer = (flags: Partial<RuntimeFlags.Info> = {}) =>
   Layer.mergeAll(
-    CrossSpawnSpawner.defaultLayer,
-    FSUtil.defaultLayer,
-    Ripgrep.defaultLayer,
-    Truncate.defaultLayer,
-    Agent.defaultLayer,
-    Git.defaultLayer,
+    AppNodeBuilder.build(CrossSpawnSpawner.node),
+    AppNodeBuilder.build(FSUtil.node),
+    AppNodeBuilder.build(Ripgrep.node),
+    AppNodeBuilder.build(Truncate.node),
+    AppNodeBuilder.build(Agent.node),
+    AppNodeBuilder.build(Git.node),
+    AppNodeBuilder.build(Config.node), // kilocode_change
   )
 
 const it = testEffect(toolLayer())

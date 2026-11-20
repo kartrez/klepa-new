@@ -1,10 +1,11 @@
 // regression test for bash permission metadata.command
+import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, ManagedRuntime } from "effect"
 import { ShellTool } from "../../src/tool/shell"
 import { provideTestInstance } from "../fixture/fixture"
 import { tmpdir } from "../fixture/fixture"
-import { Shell } from "../../src/shell/shell"
+import { Shell } from "@opencode-ai/core/shell"
 import { SessionID, MessageID } from "../../src/session/schema"
 import type { Permission } from "../../src/permission"
 import { Agent } from "../../src/agent/agent"
@@ -17,12 +18,12 @@ import { RuntimeFlags } from "../../src/effect/runtime-flags"
 
 const runtime = ManagedRuntime.make(
   Layer.mergeAll(
-    CrossSpawnSpawner.defaultLayer,
-    FSUtil.defaultLayer,
-    Plugin.defaultLayer,
-    Truncate.defaultLayer,
-    Agent.defaultLayer,
-    Config.defaultLayer,
+    AppNodeBuilder.build(CrossSpawnSpawner.node),
+    AppNodeBuilder.build(FSUtil.node),
+    AppNodeBuilder.build(Plugin.node),
+    AppNodeBuilder.build(Truncate.node),
+    AppNodeBuilder.build(Agent.node),
+    AppNodeBuilder.build(Config.node),
     RuntimeFlags.layer(),
   ),
 )
@@ -67,11 +68,11 @@ describe("bash permission metadata.command", () => {
   })
 
   test.skipIf(process.platform === "win32").each([
-    ["single quoted", "cat << 'EOF'\n$HOME\nEOF"],
-    ["double quoted", 'cat << "EOF"\n$HOME\nEOF'],
-    ["escaped", "cat << \\EOF\n$HOME\nEOF"],
-    ["unquoted", "cat << EOF\n$HOME\nEOF"],
-  ] as const)("marks %s heredocs", async (_, command) => {
+    ["single quoted", "cat << 'EOF'\n$HOME\nEOF", "cat << 'EOF'__HOME_EOF"],
+    ["double quoted", 'cat << "EOF"\n$HOME\nEOF', 'cat << "EOF"__HOME_EOF'],
+    ["escaped", "cat << \\EOF\n$HOME\nEOF", "cat << \\EOF__HOME_EOF"],
+    ["unquoted", "cat << EOF\n$HOME\nEOF", "cat << EOF_$HOME_EOF"],
+  ] as const)("marks %s heredocs", async (_, command, pattern) => {
     await using tmp = await tmpdir()
     await provideTestInstance({
       directory: tmp.path,
@@ -83,7 +84,9 @@ describe("bash permission metadata.command", () => {
         const req = requests.find((item) => item.permission === "bash")
         expect(req?.metadata.heredoc).toBe(true)
         expect(req?.metadata.command).toBe(command)
-        expect(req?.patterns).toEqual([command])
+        // The pattern masks the inert heredoc body (newlines and literal operators)
+        // so a read-only heredoc is not denied, while metadata.command stays raw.
+        expect(req?.patterns).toEqual([pattern])
         expect(req?.always).toEqual(["cat *"])
       },
     })

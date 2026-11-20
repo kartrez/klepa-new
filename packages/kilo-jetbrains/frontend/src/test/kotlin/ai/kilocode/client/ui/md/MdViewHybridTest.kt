@@ -9,6 +9,7 @@ import com.intellij.execution.ui.ConsoleViewContentType
 import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.actionSystem.UiDataProvider
 import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
+import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.fileTypes.FileType
 import com.intellij.openapi.fileTypes.FileTypeRegistry
 import com.intellij.openapi.fileTypes.PlainTextFileType
@@ -23,14 +24,21 @@ import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Cursor
 import java.awt.Point
+import java.awt.Rectangle
 import java.awt.datatransfer.DataFlavor
 import java.awt.event.MouseEvent
+import java.awt.image.BufferedImage
 import java.net.URI
 import javax.swing.Box
 import javax.swing.JPanel
 import javax.swing.ScrollPaneConstants
+import javax.swing.SwingConstants
 import javax.swing.event.HyperlinkEvent
+import javax.swing.text.GlyphView
+import javax.swing.text.Position
+import javax.swing.text.View
 import javax.swing.text.html.HTML
 import javax.swing.text.html.HTMLDocument
 
@@ -72,6 +80,18 @@ class MdViewHybridTest : BasePlatformTestCase() {
         assertTrue(view.html().contains("<strong>"))
     }
 
+    fun `test append normalizes crlf split between chunks`() {
+        view.append("```text\nfirst\r")
+        val field = editors().single()
+
+        view.append("\nsecond\r\n")
+        view.append("```")
+
+        assertSame(field, editors().single())
+        assertEquals("first\nsecond", field.document.text)
+        assertEquals("```text\nfirst\r\nsecond\r\n```", view.markdown())
+    }
+
     fun `test fenced code block shows horizontal scrollbar as needed`() {
         view.set("```kotlin\nval value = 1\n```")
         val pane = scrolls().single()
@@ -88,7 +108,7 @@ class MdViewHybridTest : BasePlatformTestCase() {
         assertEquals(0, pane.verticalScrollBar.preferredSize.width)
     }
 
-    fun `test transparent markdown keeps code block background opaque`() {
+    fun `test transparent markdown keeps code block surface filled`() {
         view.opaque = false
 
         view.set("```kotlin\nval value = 1\n```")
@@ -97,7 +117,9 @@ class MdViewHybridTest : BasePlatformTestCase() {
         val bg = view.preBg
 
         assertFalse(view.component.isOpaque)
-        assertTrue(pane.isOpaque)
+        // The pane paints its own rounded surface fill, so it stays non-opaque; the inner viewport
+        // and editor keep the surface color.
+        assertFalse(pane.isOpaque)
         assertTrue(pane.viewport.isOpaque)
         assertTrue(editor.scrollPane.isOpaque)
         assertTrue(editor.scrollPane.viewport.isOpaque)
@@ -106,6 +128,37 @@ class MdViewHybridTest : BasePlatformTestCase() {
         assertEquals(bg.rgb, editor.backgroundColor.rgb)
         assertEquals(bg.rgb, editor.scrollPane.background.rgb)
         assertEquals(bg.rgb, editor.scrollPane.viewport.background.rgb)
+    }
+
+    fun `test fenced code block corners are rounded`() {
+        view.set("```kotlin\nval x = 1\n```")
+        val pane = scrolls().single()
+        pane.setSize(200, 60)
+        pane.doLayout()
+
+        val image = BufferedImage(200, 60, BufferedImage.TYPE_INT_ARGB)
+        val g = image.createGraphics()
+        pane.paint(g)
+        g.dispose()
+        val fill = view.preBg.rgb
+
+        assertEquals("surface fills along the top edge", fill, image.getRGB(100, 2))
+        assertFalse("rounded corner is left unfilled", fill == image.getRGB(0, 0))
+    }
+
+    fun `test wide code block clips scrollbar to rounded bottom corners`() {
+        view.set("```kotlin\n${"x".repeat(500)}\n```")
+        val pane = scrolls().single()
+        pane.setSize(160, pane.preferredSize.height)
+        pane.doLayout()
+
+        val image = BufferedImage(160, pane.height, BufferedImage.TYPE_INT_ARGB)
+        val g = image.createGraphics()
+        pane.paint(g)
+        g.dispose()
+
+        assertTrue("wide content shows the horizontal scrollbar", pane.horizontalScrollBar.isVisible)
+        assertEquals("bottom corner stays transparent", 0, image.getRGB(0, pane.height - 1) ushr 24)
     }
 
     fun `test fenced code block preserves multiline editor text and height`() {
@@ -120,6 +173,17 @@ class MdViewHybridTest : BasePlatformTestCase() {
         assertEquals("val one = 1\nval two = 2\nval three = 3", editor.text)
         assertEquals(editor.preferredSize.height + ins.top + ins.bottom + pad.top + pad.bottom + bar, pane.preferredSize.height)
         assertTrue(pane.preferredSize.height >= line * 3)
+    }
+
+    fun `test fenced code block normalizes mixed line separators`() {
+        val markdown = "```java\nList.of(\"a\", \"b\");\r\n\n  Line two\r\n```"
+
+        view.set(markdown)
+
+        val text = editors().single().document.text
+        assertEquals("List.of(\"a\", \"b\");\n\n  Line two", text)
+        assertFalse(text.contains('\r'))
+        assertEquals(markdown, view.markdown())
     }
 
     fun `test fenced code block balances content padding with horizontal scrollbar`() {
@@ -237,6 +301,7 @@ class MdViewHybridTest : BasePlatformTestCase() {
         assertTrue(pane.text.contains("<code style=\"color: $color\">"))
         assertFalse(pane.text.contains("#cc8866"))
         assertFalse(pane.text.contains("background:"))
+        assertTrue(view.overrideSheet().contains("border-width: 0"))
         assertTrue(scrolls().isEmpty())
         assertTrue(editors().isEmpty())
     }
@@ -254,6 +319,71 @@ class MdViewHybridTest : BasePlatformTestCase() {
         view.set("See [docs](https://example.com)")
 
         assertTrue(htmls().single().hyperlinkListeners.size > 1)
+    }
+
+    fun `test bidi markdown word breaks support visual navigation`() {
+        for (markdown in listOf(
+            "foo.bar \u05D0\u05D1\u05D2 [docs](https://example.com)",
+            "| name | value |\n|---|---|\n| foo.bar | \u05D0\u05D1\u05D2 |",
+        )) {
+            view.set(markdown)
+            val pane = htmls().singleOrNull() ?: scrolls().single().viewport.view as JBHtmlPane
+            render(pane, 420)
+            assertTrue(pane.document.getText(0, pane.document.length).contains('\u200B'))
+            navigate(pane)
+        }
+    }
+
+    fun `test bidi word breaks preserve wrapping and actual link hover`() {
+        view.set("${"segment/".repeat(30)}file.txt \u05D0\u05D1\u05D2 [docs](https://example.com)")
+        val pane = htmls().single()
+        render(pane, 480)
+        val wide = pane.height
+        render(pane, 160)
+        assertTrue("Word breaks must still wrap long paths", pane.height > wide)
+        val events = mutableListOf<HyperlinkEvent.EventType>()
+        pane.addHyperlinkListener {
+            if (it.description == "https://example.com") events.add(it.eventType)
+        }
+        val iter = (pane.document as HTMLDocument).getIterator(HTML.Tag.A)
+        while (iter.isValid && iter.attributes.getAttribute(HTML.Attribute.HREF) != "https://example.com") iter.next()
+        assertTrue(iter.isValid)
+        val cursor = pane.cursor.type
+        val link = pane.modelToView2D(iter.startOffset)!!.bounds
+        pane.dispatchEvent(MouseEvent(pane, MouseEvent.MOUSE_MOVED, System.currentTimeMillis(), 0, link.x + 1, link.y + link.height / 2, 0, false, MouseEvent.NOBUTTON))
+        assertTrue(events.contains(HyperlinkEvent.EventType.ENTERED))
+        assertEquals(Cursor.HAND_CURSOR, pane.cursor.type)
+
+        val offset = pane.document.getText(0, pane.document.length).indexOf('\u05D0')
+        val text = pane.modelToView2D(offset)!!.bounds
+        pane.dispatchEvent(MouseEvent(pane, MouseEvent.MOUSE_MOVED, System.currentTimeMillis(), 0, text.x + 1, text.y + text.height / 2, 0, false, MouseEvent.NOBUTTON))
+        assertTrue(events.contains(HyperlinkEvent.EventType.EXITED))
+        assertEquals(cursor, pane.cursor.type)
+    }
+
+    fun `test bidi word break updates retain the pane and stay bounded`() {
+        val baseline = EditorFactory.getInstance().allEditors.size
+        view.set("foo.bar \u05D0\u05D1\u05D2")
+        val pane = htmls().single()
+        val listeners = pane.mouseListeners.size
+        val motion = pane.mouseMotionListeners.size
+
+        repeat(200) { index ->
+            view.set("foo.bar value$index \u05D0\u05D1\u05D2 [docs](https://example.com)")
+            render(pane, 240)
+            navigate(pane)
+            pane.viewToModel2D(Point(pane.width - 1, pane.height - 1))
+            assertSame(pane, htmls().single())
+            assertEquals(1, (view.component as JPanel).componentCount)
+            assertEquals(listeners, pane.mouseListeners.size)
+            assertEquals(motion, pane.mouseMotionListeners.size)
+        }
+
+        view.clear()
+        drainEdt()
+        assertTrue(htmls().isEmpty())
+        assertEquals(0, (view.component as JPanel).componentCount)
+        assertEquals(baseline, EditorFactory.getInstance().allEditors.size)
     }
 
     fun `test scrolling clears hovered prose link`() {
@@ -307,6 +437,27 @@ class MdViewHybridTest : BasePlatformTestCase() {
 
         assertTrue(html.contains("href=\"kilocode/session/prompt.ts:302\">kilocode/session/prompt.ts:302</a>,"))
         assertTrue(html.contains("href=\"native-plan-prompt.txt:37-38\">native-plan-prompt.txt:37-38</a>."))
+    }
+
+    fun `test inline code url renders a live anchor that dispatches link events`() {
+        val received = mutableListOf<MdView.LinkEvent>()
+        view.addLinkListener { received.add(it) }
+        view.set("Release PR: `https://example.com/pull/13524`")
+        val pane = htmls().single()
+        val iter = (pane.document as HTMLDocument).getIterator(HTML.Tag.A)
+
+        assertTrue("code span url must render as an anchor", iter.isValid)
+        assertEquals("https://example.com/pull/13524", iter.attributes.getAttribute(HTML.Attribute.HREF))
+
+        val event = HyperlinkEvent(
+            pane,
+            HyperlinkEvent.EventType.ACTIVATED,
+            URI("https://example.com/pull/13524").toURL(),
+            "https://example.com/pull/13524",
+        )
+        pane.hyperlinkListeners.forEach { it.hyperlinkUpdate(event) }
+
+        assertEquals("https://example.com/pull/13524", received.single().href)
     }
 
     fun `test existing links are not nested as file refs`() {
@@ -783,7 +934,7 @@ class MdViewHybridTest : BasePlatformTestCase() {
         assertEquals("one", editors().single().text)
     }
 
-    fun `test fenced code block width is bounded and boxed`() {
+    fun `test fenced code block width is bounded and borderless`() {
         view.set("```kotlin\n${"x".repeat(500)}\n```")
         val pane = scrolls().single()
         val editor = editors().single()
@@ -792,8 +943,10 @@ class MdViewHybridTest : BasePlatformTestCase() {
         assertEquals(0, pane.preferredSize.width)
         assertTrue(editor.preferredSize.width > pane.preferredSize.width)
         assertTrue(pane.maximumSize.width > 1000)
-        assertTrue(ins.top > 0)
-        assertTrue(ins.left > 0)
+        assertEquals(0, ins.top)
+        assertEquals(0, ins.left)
+        assertEquals(0, ins.bottom)
+        assertEquals(0, ins.right)
         assertEquals(pane.background, pane.viewport.background)
     }
 
@@ -980,6 +1133,7 @@ class MdViewHybridTest : BasePlatformTestCase() {
         val field = editors().single()
         val editor = field.getEditor(true)!!
         val style = customStyle()
+        val bg = style.editorBackground.rgb
 
         view.applyStyle(style)
 
@@ -989,11 +1143,11 @@ class MdViewHybridTest : BasePlatformTestCase() {
             Color(0xDD, 0xEE, 0xFF).rgb,
             editor.colorsScheme.getAttributes(DefaultLanguageHighlighterColors.DOC_CODE_BLOCK).foregroundColor.rgb,
         )
-        assertEquals(Color(0x44, 0x55, 0x66).rgb, editor.backgroundColor.rgb)
-        assertEquals(Color(0x44, 0x55, 0x66).rgb, pane.background.rgb)
-        assertEquals(Color(0x44, 0x55, 0x66).rgb, pane.viewport.background.rgb)
-        assertEquals(Color(0x44, 0x55, 0x66).rgb, editor.scrollPane.background.rgb)
-        assertEquals(Color(0x44, 0x55, 0x66).rgb, editor.scrollPane.viewport.background.rgb)
+        assertEquals(bg, editor.backgroundColor.rgb)
+        assertEquals(bg, pane.background.rgb)
+        assertEquals(bg, pane.viewport.background.rgb)
+        assertEquals(bg, editor.scrollPane.background.rgb)
+        assertEquals(bg, editor.scrollPane.viewport.background.rgb)
         assertEquals(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER, editor.scrollPane.horizontalScrollBarPolicy)
         assertEquals(ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER, editor.scrollPane.verticalScrollBarPolicy)
     }
@@ -1090,6 +1244,36 @@ class MdViewHybridTest : BasePlatformTestCase() {
     private fun struts(): List<Box.Filler> = (view.component as JPanel).components.filterIsInstance<Box.Filler>()
 
     private fun editors(): List<EditorTextField> = scrolls().mapNotNull { it.viewport.view as? EditorTextField }
+
+    private fun views(view: View): List<View> = listOf(view) +
+        (0 until view.viewCount).flatMap { views(view.getView(it)) }
+
+    private fun render(pane: JBHtmlPane, width: Int) {
+        layout(width)
+        pane.setSize(width, pane.preferredSize.height)
+        val graphics = BufferedImage(width, pane.height, BufferedImage.TYPE_INT_ARGB).createGraphics()
+        try {
+            pane.paint(graphics)
+        } finally {
+            graphics.dispose()
+        }
+    }
+
+    private fun navigate(pane: JBHtmlPane) {
+        val glyphs = views(pane.ui.getRootView(pane)).filterIsInstance<GlyphView>()
+        assertTrue(glyphs.any { it.glyphPainter?.javaClass?.simpleName == "GlyphPainter2" })
+        for (glyph in glyphs) {
+            for (direction in listOf(SwingConstants.WEST, SwingConstants.EAST)) {
+                glyph.getNextVisualPositionFrom(
+                    -1,
+                    Position.Bias.Forward,
+                    Rectangle(0, 0, pane.width, pane.height),
+                    direction,
+                    arrayOf(Position.Bias.Forward),
+                )
+            }
+        }
+    }
 
     private fun type(ext: String): FileType {
         val type = FileTypeRegistry.getInstance().getFileTypeByExtension(ext)

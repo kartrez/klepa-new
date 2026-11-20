@@ -15,6 +15,7 @@ import { useProvider } from "../../context/provider"
 import { useVSCode } from "../../context/vscode"
 import type { ExtensionMessage, ProviderAuthState, ProviderConfig } from "../../types/messages"
 import { createProviderAction } from "../../utils/provider-action"
+import { configMessage } from "../../utils/open-config"
 import { MASKED_CUSTOM_PROVIDER_KEY, resolveCustomProviderKey } from "../../../../src/shared/custom-provider"
 import { SITE_URL } from "../../../../src/shared/branding"
 import {
@@ -90,6 +91,7 @@ function modes(raw: unknown): Modalities {
 function parseVariant([name, cfg]: [string, Record<string, unknown>]): VariantEntry {
   return {
     name,
+    raw: cfg,
     enableThinking: typeof cfg.enable_thinking === "boolean" ? cfg.enable_thinking : undefined,
     thinking:
       typeof cfg.thinking === "object" && cfg.thinking !== null
@@ -227,11 +229,21 @@ const CustomProviderDialog = (props: CustomProviderDialogProps) => {
   const [fetchKey, setFetchKey] = createSignal("")
   let fetchVersion = 0
 
+  // Whether a model-listing fetch is possible for the current package + URL.
+  const canFetch = (npm: CustomProviderPackage, url: string) =>
+    npm !== "@ai-sdk/anthropic" && /^https?:\/\//.test(url.trim())
+
   createEffect(() => {
     const npm = fetchPackage()
     const url = fetchURL()
     const key = fetchKey()
     void key // subscribe to key changes without using the value here
+
+    // Invalidate any in-flight fetch (including a manual one) as soon as the
+    // connection details change, so a stale response can't land after the
+    // user has moved on to different URL/key/package values.
+    fetchVersion++
+    setFetching(false)
 
     // Clear previous results whenever URL or key changes
     setFetchedModels(undefined)
@@ -239,9 +251,8 @@ const CustomProviderDialog = (props: CustomProviderDialogProps) => {
     setFetchStatus(undefined)
     setSearch("")
 
-    if (npm === "@ai-sdk/anthropic" || !/^https?:\/\//.test(url.trim())) return
+    if (!canFetch(npm, url)) return
 
-    fetchVersion++
     const version = fetchVersion
     const timer = setTimeout(() => {
       if (version === fetchVersion) doFetch()
@@ -450,6 +461,18 @@ const CustomProviderDialog = (props: CustomProviderDialogProps) => {
     setErrors("models", (v) => v.filter((_, i) => i !== index))
   }
 
+  function toggleAllReasoning() {
+    const all = form.models.length > 0 && form.models.every((m) => m.reasoning)
+    const target = !all
+    form.models.forEach((_, i) => setForm("models", i, "reasoning", target))
+  }
+
+  function toggleAllImages() {
+    const all = form.models.length > 0 && form.models.every((m) => m.supportsImages)
+    const target = !all
+    form.models.forEach((_, i) => setForm("models", i, "supportsImages", target))
+  }
+
   function addHeader() {
     setForm("headers", (v) => [...v, { key: "", value: "" }])
     setErrors("headers", (v) => [...v, {}])
@@ -459,25 +482,6 @@ const CustomProviderDialog = (props: CustomProviderDialogProps) => {
     if (form.headers.length <= 1) return
     setForm("headers", (v) => v.filter((_, i) => i !== index))
     setErrors("headers", (v) => v.filter((_, i) => i !== index))
-  }
-
-  function addVariant(mi: number) {
-    const blank: VariantEntry = {
-      name: "",
-      enableThinking: undefined,
-      thinking: undefined,
-      splitReasoning: undefined,
-      reasoningEffort: undefined,
-      outputEffort: undefined,
-      chatTemplateArgs: undefined,
-    }
-    setForm("models", mi, "variants", (v) => [...v, blank])
-    setErrors("models", mi, "variants", (v) => [...(v ?? []), {}])
-  }
-
-  function removeVariant(mi: number, vi: number) {
-    setForm("models", mi, "variants", (v) => v.filter((_, i) => i !== vi))
-    setErrors("models", mi, "variants", (v) => (v ?? []).filter((_, i) => i !== vi))
   }
 
   function validate() {
@@ -533,6 +537,7 @@ const CustomProviderDialog = (props: CustomProviderDialogProps) => {
 
   return (
     <Dialog
+      size="large"
       title={
         <IconButton
           tabIndex={-1}
@@ -548,13 +553,15 @@ const CustomProviderDialog = (props: CustomProviderDialogProps) => {
         style={{
           display: "flex",
           "flex-direction": "column",
-          gap: "24px",
-          padding: "0 10px 12px 10px",
+          gap: "20px",
+          padding: "0 16px 16px 16px",
           "overflow-y": "auto",
-          "max-height": "60vh",
+          flex: 1,
+          width: "100%",
+          "box-sizing": "border-box",
         }}
       >
-        <div style={{ padding: "0 10px", display: "flex", gap: "16px", "align-items": "center" }}>
+        <div style={{ display: "flex", gap: "16px", "align-items": "center" }}>
           <ProviderIcon id="synthetic" width={20} height={20} />
           <div
             style={{ "font-size": "var(--kilo-font-size-16)", "font-weight": "500", color: "var(--vscode-foreground)" }}
@@ -563,25 +570,38 @@ const CustomProviderDialog = (props: CustomProviderDialogProps) => {
           </div>
         </div>
 
-        <form
-          onSubmit={save}
-          style={{ padding: "0 10px 24px 10px", display: "flex", "flex-direction": "column", gap: "24px" }}
-        >
-          <div style={{ "font-size": "var(--kilo-font-size-14)", color: "var(--text-base)" }}>
-            {language.t("provider.custom.description.prefix")}
-            <a
-              href={SITE_URL}
-              onClick={(e) => {
-                e.preventDefault()
-                vscode.postMessage({
-                  type: "openExternal",
-                  url: SITE_URL,
-                })
-              }}
-            >
-              {language.t("provider.custom.description.link")}
-            </a>
-            {language.t("provider.custom.description.suffix")}
+        <form onSubmit={save} style={{ display: "flex", "flex-direction": "column", gap: "20px" }}>
+          <div style={{ display: "flex", "flex-direction": "column", gap: "10px" }}>
+            <div style={{ "font-size": "var(--kilo-font-size-14)", color: "var(--text-base)" }}>
+              {language.t("provider.custom.description.prefix")}
+              <a
+                href={SITE_URL}
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  vscode.postMessage({
+                    type: "openExternal",
+                    url: SITE_URL,
+                  })
+                }}
+              >
+                {language.t("provider.custom.description.link")}
+              </a>
+              {language.t("provider.custom.description.suffix")}
+            </div>
+            <Show when={editing()}>
+              <div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="small"
+                  icon="edit"
+                  onClick={() => vscode.postMessage(configMessage("global", language.t))}
+                >
+                  {language.t("provider.custom.edit.advanced")}
+                </Button>
+              </div>
+            </Show>
           </div>
 
           <div style={{ display: "flex", "flex-direction": "column", gap: "16px" }}>
@@ -656,25 +676,64 @@ const CustomProviderDialog = (props: CustomProviderDialogProps) => {
 
           {/* Models */}
           <div style={{ display: "flex", "flex-direction": "column", gap: "12px" }}>
-            <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
-              <label
-                style={{
-                  "font-size": "var(--kilo-font-size-12)",
-                  "font-weight": "500",
-                  color: "var(--text-weak-base)",
-                }}
-              >
-                {language.t("provider.custom.models.label")}
-              </label>
-              <Show when={fetching()}>
-                <Spinner style={{ width: "12px", height: "12px" }} />
-              </Show>
+            <div
+              style={{
+                display: "flex",
+                "justify-content": "space-between",
+                "align-items": "center",
+                "flex-wrap": "wrap",
+                gap: "8px",
+              }}
+            >
+              <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
+                <label
+                  style={{
+                    "font-size": "var(--kilo-font-size-12)",
+                    "font-weight": "500",
+                    color: "var(--text-weak-base)",
+                  }}
+                >
+                  {language.t("provider.custom.models.label")}
+                </label>
+                <Show when={fetching()}>
+                  <Spinner style={{ width: "12px", height: "12px" }} />
+                </Show>
+              </div>
+              <div style={{ display: "flex", gap: "8px", "align-items": "center", "flex-wrap": "wrap" }}>
+                <Button
+                  type="button"
+                  size="small"
+                  variant="ghost"
+                  icon="reset"
+                  onClick={doFetch}
+                  disabled={fetching() || !canFetch(form.npm, form.baseURL)}
+                >
+                  {language.t("provider.custom.models.fetch.button")}
+                </Button>
+                <Button
+                  type="button"
+                  size="small"
+                  variant="ghost"
+                  onClick={toggleAllReasoning}
+                  disabled={form.models.length === 0}
+                >
+                  {language.t("provider.custom.models.toggleReasoning")}
+                </Button>
+                <Button
+                  type="button"
+                  size="small"
+                  variant="ghost"
+                  onClick={toggleAllImages}
+                  disabled={form.models.length === 0}
+                >
+                  {language.t("provider.custom.models.toggleImages")}
+                </Button>
+              </div>
             </div>
             <For each={form.models}>
               {(m, i) => (
                 <ModelCard
                   m={m}
-                  i={i}
                   errors={errors.models[i()] ?? {}}
                   t={language.t}
                   canRemove={form.models.length > 1}
@@ -683,23 +742,6 @@ const CustomProviderDialog = (props: CustomProviderDialogProps) => {
                   onChangeReasoning={(v) => setForm("models", i(), "reasoning", v)}
                   onChangeSupportsImages={(v) => setForm("models", i(), "supportsImages", v)}
                   onRemove={() => removeModel(i())}
-                  onAddVariant={() => addVariant(i())}
-                  onRemoveVariant={(vi) => removeVariant(i(), vi)}
-                  onChangeVariantName={(vi, val) => setForm("models", i(), "variants", vi, "name", val)}
-                  onChangeVariantEnableThinking={(vi, val) =>
-                    setForm("models", i(), "variants", vi, "enableThinking", val)
-                  }
-                  onChangeVariantThinking={(vi, val) => setForm("models", i(), "variants", vi, "thinking", val)}
-                  onChangeVariantSplitReasoning={(vi, val) =>
-                    setForm("models", i(), "variants", vi, "splitReasoning", val)
-                  }
-                  onChangeVariantReasoningEffort={(vi, val) =>
-                    setForm("models", i(), "variants", vi, "reasoningEffort", val)
-                  }
-                  onChangeVariantOutputEffort={(vi, val) => setForm("models", i(), "variants", vi, "outputEffort", val)}
-                  onChangeVariantChatTemplateArgs={(vi, val) =>
-                    setForm("models", i(), "variants", vi, "chatTemplateArgs", val)
-                  }
                 />
               )}
             </For>

@@ -5,24 +5,26 @@ import ai.kilocode.client.app.KiloAgentBehaviorService
 import ai.kilocode.client.app.KiloAppService
 import ai.kilocode.client.app.KiloWorkspaceService
 import ai.kilocode.client.plugin.KiloBundle
-import ai.kilocode.client.settings.base.SettingsContentField
+import ai.kilocode.client.plugin.KiloDocs
 import ai.kilocode.client.settings.base.SettingsDraftPage
 import ai.kilocode.client.settings.base.SettingsDraftState
-import ai.kilocode.client.settings.base.SettingsListCell
-import ai.kilocode.client.settings.base.SettingsListConfig
-import ai.kilocode.client.settings.base.SettingsListItem
+import ai.kilocode.client.settings.base.SettingsInfo
 import ai.kilocode.client.settings.base.SettingsListPanel
-import ai.kilocode.client.settings.base.SettingsListSelection
+import ai.kilocode.client.settings.base.SettingsPathDialog
 import ai.kilocode.client.settings.base.SettingsRow
 import ai.kilocode.client.settings.base.SettingsToggle
 import ai.kilocode.client.settings.base.SettingsToolbarAction
-import ai.kilocode.client.settings.base.SettingsPathDialog
 import ai.kilocode.client.settings.base.settingsChoosePath
 import ai.kilocode.client.settings.base.settingsContentScroll
 import ai.kilocode.client.settings.base.settingsEditorFileType
+import ai.kilocode.client.ui.CodeViewField
 import ai.kilocode.client.ui.UiStyle
 import ai.kilocode.client.ui.layout.Stack
 import ai.kilocode.client.ui.layout.StackAxis
+import ai.kilocode.client.ui.active.ActiveCell
+import ai.kilocode.client.ui.active.ActiveConfig
+import ai.kilocode.client.ui.active.ActiveItem
+import ai.kilocode.client.ui.active.ActiveSelection
 import ai.kilocode.log.KiloLog
 import ai.kilocode.rpc.dto.KiloAppStateDto
 import com.intellij.icons.AllIcons
@@ -42,16 +44,16 @@ import com.intellij.ui.TitledSeparator
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.ui.JBUI
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
 import java.nio.charset.StandardCharsets
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import javax.swing.JComponent
 import javax.swing.ScrollPaneConstants
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val edt = Dispatchers.EDT + ModalityState.any().asContextElement()
 
@@ -66,7 +68,7 @@ internal class RulesSettingsUi(
     private val app: KiloAppService = service(),
     private val workspaces: KiloWorkspaceService = service(),
     private val agent: KiloAgentBehaviorService = service(),
-) : SettingsListPanel(scope, SettingsListConfig.Equal.copy(tooltip = false)), SettingsDraftPage {
+) : SettingsListPanel(scope, ActiveConfig.Equal.copy(tooltip = false)), SettingsDraftPage {
     private val cs = scope
     private val state = SettingsDraftState(rulesDraft(app.state.value.config, false), ::savedMatches)
     private val draft get() = state.draft
@@ -80,7 +82,7 @@ internal class RulesSettingsUi(
         reload()
     }
 
-    override suspend fun fetch(): List<SettingsListItem> {
+    override suspend fun fetch(): List<ActiveItem> {
         val compat = agent.claudeCodeCompat()
         return withContext(edt) {
             state.accept(rulesDraft(app.state.value.config, compat))
@@ -107,6 +109,12 @@ internal class RulesSettingsUi(
     )
 
     override fun showRefresh(): Boolean = false
+
+    override fun info(): JComponent = SettingsInfo(
+        KiloBundle.message("settings.rules.info"),
+        KiloBundle.message("settings.rules.info.more"),
+        KiloDocs.RULES,
+    )
 
     override fun searchPlaceholder() = KiloBundle.message("settings.rules.files.search")
 
@@ -173,7 +181,7 @@ internal class RulesSettingsUi(
             return
         }
         state.update { copy(instructions = instructions + value) }
-        view.update(rows(), SettingsListSelection.Key(value))
+        view.update(rows(), ActiveSelection.Key(value))
     }
 
     private fun editFile(path: String) {
@@ -185,7 +193,7 @@ internal class RulesSettingsUi(
         val dialog = editor(path, content)
         if (!dialog.showAndGet()) return
         state.update { copy(edited = edited + (path to dialog.content())) }
-        view.update(rows(), SettingsListSelection.Key(path))
+        view.update(rows(), ActiveSelection.Key(path))
     }
 
     private fun remove(path: String) {
@@ -198,7 +206,7 @@ internal class RulesSettingsUi(
         )
         if (result != Messages.YES) return
         state.update { copy(instructions = instructions - path, edited = edited - path) }
-        view.update(rows(), selectionIndex())
+        view.update(rows(), ActiveSelection.Slide)
     }
 
     private fun open(path: String) {
@@ -229,23 +237,23 @@ internal class RulesSettingsUi(
         verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
     }
 
-    private fun rows(): List<SettingsListItem> = draft.instructions.map { item(it) }
+    private fun rows(): List<ActiveItem> = draft.instructions.map { item(it) }
 
-    private fun item(value: String) = object : SettingsListItem {
+    private fun item(value: String) = object : ActiveItem {
         override val key = value
         override val title = value
         override val doubleClick = EDIT_CELL
         override val cells = listOf(
-            SettingsListCell(
+            ActiveCell(
                 OPEN_CELL,
                 KiloBundle.message("settings.rules.files.openInEditor"),
                 primary = true,
             ),
-            SettingsListCell(
+            ActiveCell(
                 EDIT_CELL,
                 KiloBundle.message("settings.agentBehavior.edit"),
             ),
-            SettingsListCell(
+            ActiveCell(
                 DELETE_CELL,
                 KiloBundle.message("common.delete"),
                 icon = AllIcons.Actions.GC,
@@ -294,7 +302,7 @@ internal class InstructionEditDialog(
     content: String,
 ) : DialogWrapper(true), RuleContentDialogHandle {
     private val base = content
-    private val field = SettingsContentField(base, settingsEditorFileType(heading, base), true)
+    private val field = CodeViewField(base, settingsEditorFileType(heading, base), true)
 
     init {
         title = heading
@@ -363,5 +371,3 @@ private fun writeInstruction(root: String?, path: String, text: String): Boolean
     }
     return ok
 }
-
-

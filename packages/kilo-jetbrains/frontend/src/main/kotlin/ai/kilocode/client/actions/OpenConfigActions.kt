@@ -1,6 +1,7 @@
 package ai.kilocode.client.actions
 
 import ai.kilocode.client.KiloNotifications
+import ai.kilocode.client.agentManager.AgentManagerCommand
 import ai.kilocode.client.app.KiloWorkspaceService
 import ai.kilocode.client.plugin.KiloBundle
 import ai.kilocode.client.telemetry.Telemetry
@@ -79,3 +80,9 @@ class OpenGlobalConfigAction : ConfigAction(
         }
     }
 }
+
+class OpenSetupScriptAction : AgentManagerAction(
+    AgentManagerCommand.SHOW_SETUP,
+    KiloBundle.message("action.Kilo.OpenSetupScript.text"),
+    KiloBundle.message("action.Kilo.OpenSetupScript.description"),
+)

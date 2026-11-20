@@ -4,11 +4,17 @@ import ai.kilocode.rpc.dto.DeviceAuthDto
 import ai.kilocode.rpc.dto.ConfigPatchDto
 import ai.kilocode.rpc.dto.HealthDto
 import ai.kilocode.rpc.dto.KiloAppStateDto
+import ai.kilocode.rpc.dto.LogConfigDto
+import ai.kilocode.rpc.dto.LogFileDto
 import ai.kilocode.rpc.dto.ModelFavoriteUpdateDto
 import ai.kilocode.rpc.dto.ModelSelectionUpdateDto
 import ai.kilocode.rpc.dto.ModelStateDto
 import ai.kilocode.rpc.dto.ModelVariantUpdateDto
 import ai.kilocode.rpc.dto.ProfileDto
+import ai.kilocode.rpc.dto.RetentionStatusDto
+import ai.kilocode.rpc.dto.SpeechModelDto
+import ai.kilocode.rpc.dto.SpeechRequestDto
+import ai.kilocode.rpc.dto.SpeechResultDto
 import ai.kilocode.rpc.dto.TelemetryCaptureDto
 import com.intellij.platform.rpc.RemoteApiProviderService
 import fleet.rpc.RemoteApi
@@ -45,6 +51,9 @@ interface KiloAppRpcApi : RemoteApi<Unit> {
     /** Core platform downloaded by the backend process. */
     suspend fun cliPlatform(): String
 
+    /** Whether the running Core is bundled in the plugin (true) or downloaded (false). */
+    suspend fun cliBundled(): Boolean
+
     /** Retry app connection or loading after a failure. */
     suspend fun retry()
 
@@ -63,7 +72,12 @@ interface KiloAppRpcApi : RemoteApi<Unit> {
     /** Persist a per-agent model selection. */
     suspend fun updateModelSelection(update: ModelSelectionUpdateDto): ModelStateDto
 
-    /** Clear a persisted per-agent model selection. */
+    /**
+     * Forget the persisted per-agent model selection.
+     *
+     * The persisted pick outranks every config default, so a reset that only cleared the in-memory
+     * session pick resurrected the saved model on the next mode switch or new session.
+     */
     suspend fun clearModelSelection(agent: String): ModelStateDto
 
     /** Persist a per-model reasoning variant selection. */
@@ -72,8 +86,38 @@ interface KiloAppRpcApi : RemoteApi<Unit> {
     /** Patch global CLI config values. */
     suspend fun updateConfig(patch: ConfigPatchDto): KiloAppStateDto
 
+    /** Persist and apply telemetry consent through the CLI core. */
+    suspend fun setTelemetryLevel(enabled: Boolean): KiloAppStateDto
+
+    /** Read the machine-wide session-retention policy, progress, and last run. */
+    suspend fun retentionStatus(): RetentionStatusDto
+
+    /** Trigger a machine-wide session-retention pass. */
+    suspend fun runRetention(force: Boolean): RetentionStatusDto
+
+    /** Apply frontend-managed diagnostic log settings in the backend process. */
+    suspend fun applyLogConfig(config: LogConfigDto)
+
+    /** Whether Kilo-managed worktrees under `.kilo/worktrees` are indexed by their containing project. */
+    suspend fun indexWorktrees(): Boolean
+
+    /**
+     * Persist whether Kilo-managed worktrees under `.kilo/worktrees` are indexed, and reindex every
+     * open project so the change takes effect immediately.
+     */
+    suspend fun setIndexWorktrees(value: Boolean)
+
+    /** Read the backend diagnostic log file for download in split mode. Null when absent. */
+    suspend fun backendLogFile(): LogFileDto?
+
     /** Refresh the user profile and return the latest data, or null if not logged in. */
     suspend fun refreshProfile(): ProfileDto?
+
+    /** Speech-to-text models available through the authenticated Kilo Gateway. */
+    suspend fun transcriptionModels(directory: String?): List<SpeechModelDto>
+
+    /** Transcribe an audio recording through the authenticated Kilo Gateway. */
+    suspend fun transcribe(directory: String?, request: SpeechRequestDto): SpeechResultDto
 
     /**
      * Start the device auth login flow for Kilo Gateway.

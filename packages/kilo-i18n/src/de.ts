@@ -1,12 +1,5 @@
 export const dict = {
   // Kilo Gateway provider translations
-  "provider.connect.kiloGateway.line1":
-    "Kilo Gateway bietet Ihnen Zugang zu einer kuratierten Auswahl zuverlässiger, optimierter Modelle für Coding-Agenten.",
-  "provider.connect.kiloGateway.line2":
-    "Mit einem einzigen API-Schlüssel erhalten Sie Zugang zu Modellen wie Claude, GPT, Gemini, GLM und mehr.",
-  "provider.connect.kiloGateway.visit.prefix": "Besuchen Sie ",
-  "provider.connect.kiloGateway.visit.link": "kilo.ai",
-  "provider.connect.kiloGateway.visit.suffix": ", um Ihren API-Schlüssel zu erhalten.",
   "provider.connect.kiloGateway.byok.prefix": "Für weitere Nutzungsstatistiken ",
   "provider.connect.kiloGateway.byok.link": "BYOK via Kilo's Gateway",
   "provider.connect.kiloGateway.byok.suffix": " nutzen.",
@@ -24,14 +17,9 @@ export const dict = {
   "settings.providers.note.vercel": "Einheitlicher Zugriff auf KI-Modelle mit intelligentem Routing",
 
   // Reasoning block label
-  "ui.permission.run": "Ausführen",
   "ui.reasoning.label": "Denken",
 
   // Marketplace
-  "marketplace.tab.skills": "Skills",
-  "marketplace.tab.mcpServers": "MCP-Server",
-  "marketplace.category.all": "Alle",
-  "marketplace.placeholder": "Noch nicht implementiert",
   "marketplace.card.installed": "Installiert",
   "marketplace.card.install": "Installieren",
   "marketplace.card.remove": "Entfernen",
@@ -47,6 +35,7 @@ export const dict = {
   "marketplace.install.scope.global.description":
     "Alle Projekte auf diesem Computer. Wird in Ihrer Benutzerkonfiguration gespeichert.",
   "marketplace.install.destination": "Installationsziel",
+  "marketplace.install.includedSkills": "Enthaltene Skills",
   "marketplace.install.about.mcp":
     "Ein MCP-Server stellt Kilo zusätzliche Werkzeuge für die Arbeit mit externen Diensten oder lokalen Programmen bereit.",
   "marketplace.install.about.agent":
@@ -59,9 +48,12 @@ export const dict = {
     "Projektdateien können in die Versionsverwaltung aufgenommen werden. Speichern Sie hier keine Geheimnisse, es sei denn, die Konfiguration verweist auf eine Umgebungsvariable.",
   "marketplace.install.learnMore": "Erfahren Sie, wie Installationen aus dem Marketplace funktionieren",
   "marketplace.install.learnMcp": "Mehr über MCP erfahren",
-  "marketplace.install.installedAt": "Installiert unter {{path}}",
+  "marketplace.install.about.plugin":
+    "Ein Plugin fügt Kilo benutzerdefinierte Werkzeuge und Integrationen hinzu. Plugins werden mit vollständigen Berechtigungen ausgeführt.",
+  "marketplace.install.plugin.warning":
+    "Plugins führen Code mit vollständigen Berechtigungen aus. Sie können Ihre Dateien lesen und ändern, Befehle ausführen und auf Ihre Zugangsdaten und Ihr Netzwerk zugreifen. Installieren Sie nur Plugins, denen Sie vertrauen.",
   "marketplace.intro":
-    "Installieren Sie wiederverwendbare Agenten, Skills und MCP-Werkzeuge für ein Projekt oder für alle Projekte.",
+    "Installieren Sie wiederverwendbare Agenten, Skills, MCP-Werkzeuge und Plugins für ein Projekt oder für alle Projekte.",
   "marketplace.intro.learnMore": "Über den Marketplace",
   "marketplace.install.prerequisites": "Voraussetzungen",
   "marketplace.install.installing": "Wird installiert...",
@@ -70,13 +62,20 @@ export const dict = {
   "marketplace.install.failed": "Installation fehlgeschlagen",
   "marketplace.install.done": "Fertig",
   "marketplace.install.close": "Schließen",
+  "marketplace.install.mcp.signIn.message": "{{name}} ist installiert, benötigt aber eine Anmeldung, bevor die Tools verwendet werden können.",
+  "marketplace.install.mcp.signIn.button": "Anmelden",
+  "marketplace.install.mcp.signIn.waiting": "Warten auf Anmeldung im Browser…",
+  "marketplace.install.mcp.signIn.cancel": "Abbrechen",
+  "marketplace.install.mcp.signIn.skip": "Später",
+  "marketplace.install.mcp.signIn.success": "Bei {{name}} angemeldet.",
+  "marketplace.install.mcp.signIn.failed": "Anmeldung bei {{name}} fehlgeschlagen.",
   "marketplace.remove.title": "{{name}} entfernen?",
   "marketplace.remove.confirm":
-    "Sind Sie sicher, dass Sie diese {{type}} entfernen möchten? Dadurch wird sie aus Ihrer {{scope}}-Konfiguration entfernt.",
+    "Soll dieser Eintrag ({{type}}) wirklich entfernt werden? Er wird dadurch aus Ihrer {{scope}}-Konfiguration entfernt.",
   "marketplace.remove.cancel": "Abbrechen",
+  "marketplace.remove.mcp.skills":
+    "Dabei werden auch die zu dieser Installation gehörenden Begleit-Skills entfernt. Unabhängig installierte Skills bleiben erhalten.",
   "marketplace.remove.confirm.button": "Entfernen",
-  "marketplace.tab.mcp": "MCP",
-  "marketplace.tab.agents": "Agenten",
   "marketplace.search": "Suchen...",
   "marketplace.filter.all": "Alle Elemente",
   "marketplace.filter.notInstalled": "Nicht installiert",
@@ -84,15 +83,15 @@ export const dict = {
   "marketplace.empty": "Keine Elemente gefunden",
   "marketplace.empty.relevant": "Keine relevanten Marketplace-Elemente für diesen Arbeitsbereich gefunden.",
   "marketplace.badge.mcpServer": "MCP-Server",
-  "marketplace.badge.mode": "Modus",
+  "marketplace.badge.skills": "Enthält Skills",
   "marketplace.card.by": "von {{author}}",
   "marketplace.install.method": "Installationsmethode",
   "marketplace.install.parameters": "Parameter",
   "marketplace.install.optional": "(optional)",
-  "marketplace.install.required": "{{name}} ist erforderlich",
   "marketplace.scope.project": "Projekt",
   "marketplace.scope.global": "Global",
   "marketplace.remove.type.mcp": "MCP-Server",
+  "marketplace.remove.type.plugin": "Plugin",
   "marketplace.remove.type.skill": "Skill",
   "marketplace.remove.type.agent": "Agent",
   "marketplace.remove.failed": "Fehler beim Entfernen von {{name}}",
@@ -103,7 +102,7 @@ export const dict = {
   "marketplace.warning.busyMany": "Mehrere Sitzungen laufen und werden unterbrochen",
   "marketplace.warning.installAnyway": "Trotzdem installieren",
   "marketplace.warning.cancel": "Abbrechen",
-  "marketplace.contribute.prompt": "Fehlt ein Skill, Agent oder MCP-Server?",
+  "marketplace.contribute.prompt": "Fehlt ein Skill, Agent, MCP-Server oder Plugin?",
   "marketplace.contribute.cta": "Auf GitHub beitragen",
   "marketplace.migration.notice":
     "Modi wurden durch Agenten ersetzt. Wenn Sie zuvor Marketplace-Modi installiert haben, entfernen Sie diese bitte und installieren Sie sie als Agenten neu, um zum neuen Format zu migrieren.",
@@ -131,8 +130,6 @@ export const dict = {
 
   // Edit-tool header and shell-tool section labels
   "ui.messagePart.openInDiffViewer": "Im Diff-Viewer öffnen",
-  "ui.messagePart.shell.command": "Befehl",
-  "ui.messagePart.shell.output": "Ausgabe",
   "ui.messagePart.openInEditor": "Im Editor öffnen",
 
   // Message feedback (thumbs up/down per assistant response)

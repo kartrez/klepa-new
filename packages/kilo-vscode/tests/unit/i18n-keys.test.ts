@@ -22,25 +22,8 @@ import path from "node:path"
 
 // Layer 1: app-local (sidebar)
 import { dict as appEn } from "../../webview-ui/src/i18n/en"
-import { dict as appZh } from "../../webview-ui/src/i18n/zh"
-import { dict as appZht } from "../../webview-ui/src/i18n/zht"
-import { dict as appKo } from "../../webview-ui/src/i18n/ko"
-import { dict as appDe } from "../../webview-ui/src/i18n/de"
-import { dict as appEs } from "../../webview-ui/src/i18n/es"
-import { dict as appFr } from "../../webview-ui/src/i18n/fr"
-import { dict as appDa } from "../../webview-ui/src/i18n/da"
-import { dict as appJa } from "../../webview-ui/src/i18n/ja"
-import { dict as appPl } from "../../webview-ui/src/i18n/pl"
 import { dict as appRu } from "../../webview-ui/src/i18n/ru"
-import { dict as appAr } from "../../webview-ui/src/i18n/ar"
-import { dict as appNo } from "../../webview-ui/src/i18n/no"
-import { dict as appBr } from "../../webview-ui/src/i18n/br"
-import { dict as appTh } from "../../webview-ui/src/i18n/th"
-import { dict as appBs } from "../../webview-ui/src/i18n/bs"
-import { dict as appTr } from "../../webview-ui/src/i18n/tr"
-import { dict as appNl } from "../../webview-ui/src/i18n/nl"
-import { dict as appUk } from "../../webview-ui/src/i18n/uk"
-import { dict as appIt } from "../../webview-ui/src/i18n/it"
+import { REVERT_ERROR_CODE } from "../../src/shared/revert-error"
 
 // Layer 2: upstream UI (@opencode-ai/ui re-exported via @kilocode/kilo-ui)
 import { dict as uiEn } from "../../../ui/src/i18n/en"
@@ -114,6 +97,7 @@ import { dict as cliTr } from "../../src/services/cli-backend/i18n/tr"
 import { dict as cliNl } from "../../src/services/cli-backend/i18n/nl"
 import { dict as cliUk } from "../../src/services/cli-backend/i18n/uk"
 import { dict as cliIt } from "../../src/services/cli-backend/i18n/it"
+import { dict as cliFa } from "../../src/services/cli-backend/i18n/fa"
 
 import { dict as hostEn } from "../../src/services/i18n/en"
 import { dict as hostZh } from "../../src/services/i18n/zh"
@@ -135,32 +119,16 @@ import { dict as hostTr } from "../../src/services/i18n/tr"
 import { dict as hostNl } from "../../src/services/i18n/nl"
 import { dict as hostUk } from "../../src/services/i18n/uk"
 import { dict as hostIt } from "../../src/services/i18n/it"
+import { dict as hostFa } from "../../src/services/i18n/fa"
 
 // ── Locale maps ─────────────────────────────────────────────────────────────
 
 const ROOT = path.resolve(import.meta.dir, "../..")
 
+// Klepa only ships English and Russian dictionaries for the sidebar app.
 const appLocales: Record<string, Record<string, string>> = {
   en: appEn,
-  zh: appZh,
-  zht: appZht,
-  ko: appKo,
-  de: appDe,
-  es: appEs,
-  fr: appFr,
-  da: appDa,
-  ja: appJa,
-  pl: appPl,
   ru: appRu,
-  ar: appAr,
-  no: appNo,
-  br: appBr,
-  th: appTh,
-  bs: appBs,
-  tr: appTr,
-  nl: appNl,
-  uk: appUk,
-  it: appIt,
 }
 
 const kiloLocales: Record<string, Record<string, string>> = {
@@ -230,6 +198,7 @@ const cliLocales: Record<string, Record<string, string>> = {
   nl: cliNl,
   uk: cliUk,
   it: cliIt,
+  fa: cliFa,
 }
 
 const hostLocales: Record<string, Record<string, string>> = {
@@ -253,6 +222,7 @@ const hostLocales: Record<string, Record<string, string>> = {
   nl: hostNl,
   uk: hostUk,
   it: hostIt,
+  fa: hostFa,
 }
 
 // Merge webview dictionaries in the same priority order as language.tsx
@@ -437,7 +407,30 @@ describe("i18n key validation — no missing translation keys", () => {
   })
 })
 
+describe("i18n keys reached through a constant rather than a literal", () => {
+  it("the shared revert failure code is a key in the sidebar dictionary", () => {
+    expect(Object.keys(appEn)).toContain(REVERT_ERROR_CODE)
+  })
+})
+
 describe("i18n locale completeness — every English key exists in all locales", () => {
+  it("translates marketplace descriptions and notices instead of copying English", () => {
+    const keys = [
+      "marketplace.install.about.plugin",
+      "marketplace.install.plugin.warning",
+      "marketplace.install.includedSkills",
+      "marketplace.remove.mcp.skills",
+      "marketplace.badge.skills",
+    ] as const
+    for (const [locale, dict] of Object.entries(kiloLocales)) {
+      if (locale === "en") continue
+      for (const key of keys) {
+        expect(dict[key]?.trim(), `${locale}: ${key}`).toBeTruthy()
+        expect(dict[key], `${locale}: ${key}`).not.toBe(kiloEn[key])
+      }
+    }
+  })
+
   it("shared UI: every English key has a translation in all locales", () => {
     const missing = findMissingLocaleKeys(uiEn, uiLocales)
     if (missing.length > 0) {

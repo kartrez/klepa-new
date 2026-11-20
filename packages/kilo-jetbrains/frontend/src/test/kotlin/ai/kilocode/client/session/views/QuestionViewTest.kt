@@ -6,7 +6,7 @@ import ai.kilocode.client.session.model.QuestionOption
 import ai.kilocode.client.session.ui.SessionRootPanel
 import ai.kilocode.client.session.ui.style.SessionUiStyle
 import ai.kilocode.client.session.ui.style.SessionEditorStyle
-import ai.kilocode.client.session.views.base.BaseQuestionView
+import ai.kilocode.client.session.views.base.DialogView
 import ai.kilocode.client.session.views.question.QuestionView
 import ai.kilocode.client.ui.HoverIcon
 import ai.kilocode.client.ui.UiStyle
@@ -272,7 +272,7 @@ class QuestionViewTest : BasePlatformTestCase() {
         )
     }
 
-    fun `test question title uses headerFont and hint uses hintFont`() {
+    fun `test question title uses headerFont and hint uses secondary font`() {
         view.show(singleSelectQuestion("q_fonts"))
 
         val style = SessionEditorStyle.current()
@@ -280,7 +280,7 @@ class QuestionViewTest : BasePlatformTestCase() {
         val hint = text(view, "Select one answer")
 
         assertEquals("title should use headerFont", style.headerFont, title.font)
-        assertEquals("hint should use hintFont", style.hintFont, hint.font)
+        assertEquals("hint should use secondary text font", SessionUiStyle.Text.Secondary.font(style), hint.font)
     }
 
     fun `test custom answer editor uses prompt text styling`() {
@@ -998,6 +998,86 @@ class QuestionViewTest : BasePlatformTestCase() {
         assertEquals("Custom editor should have preserved text", "preserved text", editorAfterBack!!.text)
     }
 
+    // ------ re-show while already visible (hidden-session reveal resync) ------
+
+    fun `test re-showing same question preserves custom text and page position`() {
+        view.show(
+            Question(
+                id = "q_reveal_same",
+                items = listOf(
+                    QuestionItem(
+                        question = "How?",
+                        header = "H",
+                        options = listOf(QuestionOption("X", "")),
+                        multiple = false,
+                        custom = true,
+                    ),
+                    QuestionItem(
+                        question = "What?",
+                        header = "W",
+                        options = listOf(QuestionOption("Y", "")),
+                        multiple = false,
+                        custom = false,
+                    ),
+                ),
+            )
+        )
+        findAll<JBRadioButton>(view).first { it.actionCommand == "" }.doClick()
+        findAll<EditorTextField>(view).first().text = "typed answer"
+        button(view, "Next").doClick()
+
+        val before = scrolls
+        // Same question object arrives again — e.g. the containing session UI was hidden while the
+        // question was active and is now revealed.
+        view.show(
+            Question(
+                id = "q_reveal_same",
+                items = listOf(
+                    QuestionItem(
+                        question = "How?",
+                        header = "H",
+                        options = listOf(QuestionOption("X", "")),
+                        multiple = false,
+                        custom = true,
+                    ),
+                    QuestionItem(
+                        question = "What?",
+                        header = "W",
+                        options = listOf(QuestionOption("Y", "")),
+                        multiple = false,
+                        custom = false,
+                    ),
+                ),
+            )
+        )
+
+        assertTrue(view.isVisible)
+        assertTrue("Re-showing the same question should still request a scroll", scrolls > before)
+        assertLabelsContain(view, "What?")
+        navButton(view, "Back").doClick()
+        val editor = findAll<EditorTextField>(view).firstOrNull()
+        assertNotNull("Custom editor should still be present after reveal", editor)
+        assertEquals("Custom text should survive a same-question reveal", "typed answer", editor!!.text)
+    }
+
+    fun `test showing a different question after reveal resets state`() {
+        view.show(customSingleQuestion("q_reveal_a"))
+        findAll<JBRadioButton>(view).first { it.actionCommand == "" }.doClick()
+        findAll<EditorTextField>(view).first().text = "stale"
+
+        view.show(customSingleQuestion("q_reveal_b"))
+
+        assertTrue(view.isVisible)
+        assertFalse(
+            "A new request id must reset the custom radio selection",
+            findAll<JBRadioButton>(view).first { it.actionCommand == "" }.isSelected,
+        )
+        assertNull(
+            "A new request id must not retain the previous custom editor",
+            findAll<EditorTextField>(view).firstOrNull { it.text == "stale" },
+        )
+    }
+
     fun `test optionless custom question is answerable`() {
         view.show(
             Question(
@@ -1052,9 +1132,9 @@ class QuestionViewTest : BasePlatformTestCase() {
     private fun text(root: Container, value: String): JBTextArea =
         findAll<JBTextArea>(root).first { it.text == value }
 
-    private fun card(): BaseQuestionView = findAll<BaseQuestionView>(view).distinct().single()
+    private fun card(): DialogView = findAll<DialogView>(view).distinct().single()
 
-    private fun spacer(card: BaseQuestionView): Component {
+    private fun spacer(card: DialogView): Component {
         val north = (card.layout as BorderLayout).getLayoutComponent(BorderLayout.NORTH) as Container
         return north.components.last()
     }

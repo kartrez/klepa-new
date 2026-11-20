@@ -10,7 +10,7 @@ import {
 } from "@opentui/core"
 import type { CommandContext } from "@opentui/keymap"
 import { createEffect, createMemo, onMount, createSignal, onCleanup, on, Show, Switch, Match } from "solid-js"
-import "opentui-spinner/solid"
+import { registerOpencodeSpinner } from "../register-spinner"
 import path from "path"
 import { fileURLToPath } from "url"
 import { useLocal } from "../../context/local"
@@ -29,11 +29,12 @@ import { useEvent } from "../../context/event"
 import { editorSelectionKey, useEditorContext, type EditorSelection } from "../../context/editor"
 import { normalizePromptContent, openEditor } from "../../editor"
 import { useExit } from "../../context/exit"
+import { createDoublePress } from "../../kilocode/double-press" // kilocode_change
 import { promptOffsetWidth } from "../../prompt/display"
 import { createStore, produce, unwrap } from "solid-js/store"
 import { usePromptHistory, type PromptInfo } from "../../prompt/history"
 import { computePromptTraits } from "../../prompt/traits"
-import { expandPastedTextPlaceholders, expandTrackedPastedText } from "../../prompt/part"
+import { expandPastedPlaceholder, expandPastedTextPlaceholders, expandTrackedPastedText } from "../../prompt/part"
 import { usePromptStash } from "../../prompt/stash"
 import { DialogStash } from "../dialog-stash"
 import { type AutocompleteRef, Autocomplete } from "./autocomplete"
@@ -41,6 +42,7 @@ import { useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { AssistantMessage, FilePart, UserMessage } from "@kilocode/sdk/v2"
 import { Locale } from "../../util/locale"
 import { errorMessage } from "../../util/error"
+import { running } from "../../util/session"
 import { formatDuration } from "../../util/format"
 import { createColors, createFrames } from "../../ui/spinner"
 import { useDialog } from "../../ui/dialog"
@@ -55,9 +57,11 @@ import { useArgs } from "../../context/args"
 // kilocode_change start
 import { KiloSessionTuiSync } from "@/kilocode/session/tui-sync"
 import { slashMatches } from "@/kilocode/cli/cmd/command-display"
-import * as AgentRequirements from "@/kilocode/cli/agent-requirements"
 import { createCostAlertController } from "@/kilocode/cli/cmd/tui/cost-alert"
 import { MemoryPrompt } from "@/kilocode/cli/cmd/tui/component/memory-prompt"
+import { GoalPrompt } from "@/kilocode/cli/cmd/tui/component/goal"
+import { KiloSteer } from "../../kilocode/steer"
+import { SteerLabel, useSubagent } from "../../kilocode/steer-label"
 // kilocode_change end
 import { KILO_BASE_MODE, useBindings, useCommandShortcut, useLeaderActive, useOpencodeKeymap } from "../../keymap"
 import { useTuiConfig } from "../../config"
@@ -67,6 +71,8 @@ import { useVim, VimModeIndicator, vimToggleCommand } from "@/kilocode/cli/cmd/t
 import { usePromptWorkspace } from "./workspace"
 import { usePromptMove } from "./move"
 import { readLocalAttachment } from "./local-attachment"
+
+registerOpencodeSpinner()
 
 export type PromptProps = {
   sessionID?: string
@@ -172,13 +178,16 @@ export function Prompt(props: PromptProps) {
   const toast = useToast()
   const nudge = useNudge() // kilocode_change
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
+  const goal = createMemo(() => GoalPrompt.read(sync.session.get(props.sessionID ?? "")?.metadata)) // kilocode_change
   const history = usePromptHistory()
   const stash = usePromptStash()
   const keymap = useOpencodeKeymap()
   const agentShortcut = useCommandShortcut("agent.cycle")
   const paletteShortcut = useCommandShortcut("command.palette.show")
+  const variantShortcut = useCommandShortcut("variant.cycle")
   const renderer = useRenderer()
   const exit = useExit()
+  const quit = createDoublePress(1000) // kilocode_change - double Ctrl+C to exit, shared with the subagent view
   const dimensions = useTerminalDimensions()
   const { theme, syntax } = useTheme()
   const kv = useKV()
@@ -230,6 +239,17 @@ export function Prompt(props: PromptProps) {
     bumpCursor: () => setCursorVersion((value) => value + 1),
     cursorVersion: () => cursorVersion(),
   })
+  // A subagent view only sends steering prompts: no shell mode and no slash commands. The prompt
+  // also shows whose input it is (color, label, placeholder) so it does not look like the parent's.
+  const subagent = useSubagent(() => props.sessionID)
+  const steer = createMemo(() => !!subagent())
+  // In a subagent view Esc belongs to the session route's `subagent.interrupt`, which stops the
+  // subagent tree and shows its hint in the subagent footer; the prompt's own interrupt stays off.
+  const interruptible = createMemo(
+    () =>
+      !steer() &&
+      (running(status().type) || (goal()?.active === true && (!vim.vimEnabled() || vim.vimMode() === "normal"))),
+  )
   // kilocode_change end
   const currentProviderLabel = createMemo(() => local.model.parsed().provider)
   const hasRightContent = createMemo(() => Boolean(props.right))
@@ -272,6 +292,7 @@ export function Prompt(props: PromptProps) {
     if (!input || input.isDestroyed) return
     if (props.disabled) input.cursorColor = theme.backgroundElement
     if (!props.disabled) input.cursorColor = theme.text
+    if (tuiConfig.cursor && !vim.vimEnabled()) input.cursorStyle = tuiConfig.cursor // kilocode_change
   })
 
   const lastUserMessage = createMemo(() => {
@@ -306,7 +327,6 @@ export function Prompt(props: PromptProps) {
     mode: "normal" | "shell"
     extmarkToPartIndex: Map<number, number>
     interrupt: number
-    exitPress: number // kilocode_change - track double ctrl+c to exit
     placeholder: number
   }>({
     placeholder: randomIndex(list().length),
@@ -317,7 +337,6 @@ export function Prompt(props: PromptProps) {
     mode: "normal",
     extmarkToPartIndex: new Map(),
     interrupt: 0,
-    exitPress: 0, // kilocode_change
   })
 
   createEffect(
@@ -419,8 +438,9 @@ export function Prompt(props: PromptProps) {
         name: "session.interrupt",
         category: "Session",
         hidden: true,
-        enabled: status().type !== "idle",
+        enabled: interruptible(), // kilocode_change
         run: () => {
+          if (!interruptible()) return // kilocode_change
           if (auto()?.visible) return
           if (!input.focused) return
           // TODO: this should be its own command
@@ -621,6 +641,7 @@ export function Prompt(props: PromptProps) {
       "prompt.stash.pop",
       "prompt.stash.list",
       "prompt.vim.toggle", // kilocode_change
+      "prompt.skills", // kilocode_change
       "session.interrupt",
       "workspace.set",
       "session.move",
@@ -861,7 +882,9 @@ export function Prompt(props: PromptProps) {
     return {
       target: inputTarget,
       enabled: inputTarget() !== undefined && !props.disabled,
-      bindings: tuiConfig.keybinds.get("prompt.paste"),
+      // kilocode_change start
+      bindings: tuiConfig.keybinds.gather("prompt.input", ["prompt.paste", "input.buffer.home", "input.buffer.end"]),
+      // kilocode_change end
     }
   })
 
@@ -885,9 +908,7 @@ export function Prompt(props: PromptProps) {
         cmd: (ctx: CommandContext<Renderable, KeyEvent>) => {
           ctx.event.preventDefault()
           ctx.event.stopPropagation()
-          setStore("exitPress", store.exitPress + 1)
-          setTimeout(() => setStore("exitPress", 0), 1000)
-          if (store.exitPress >= 2) void exit()
+          if (quit.press()) void exit()
         },
       },
     ],
@@ -902,6 +923,7 @@ export function Prompt(props: PromptProps) {
         return (
           inputTarget() !== undefined &&
           !props.disabled &&
+          !steer() && // kilocode_change - no shell mode while steering a subagent
           store.mode === "normal" &&
           !auto()?.visible &&
           input?.visualCursor.offset === 0
@@ -962,7 +984,7 @@ export function Prompt(props: PromptProps) {
             if (!item) return false
             input.setText(item.input)
             setStore("prompt", item)
-            setStore("mode", item.mode ?? "normal")
+            setStore("mode", steer() ? "normal" : (item.mode ?? "normal")) // kilocode_change - subagent views have no shell mode
             restoreExtmarksFromParts(item.parts)
             vim.resetVim() // kilocode_change - recalled history starts in insert mode
             input.cursorOffset = 0
@@ -999,7 +1021,7 @@ export function Prompt(props: PromptProps) {
             if (!item) return false
             input.setText(item.input)
             setStore("prompt", item)
-            setStore("mode", item.mode ?? "normal")
+            setStore("mode", steer() ? "normal" : (item.mode ?? "normal")) // kilocode_change - subagent views have no shell mode
             restoreExtmarksFromParts(item.parts)
             vim.resetVim() // kilocode_change - recalled history starts in insert mode
             input.cursorOffset = input.plainText.length
@@ -1042,7 +1064,7 @@ export function Prompt(props: PromptProps) {
     if (auto()?.visible) return false
     if (!store.prompt.input) return false
     // kilocode_change start - in-memory cost alert command
-    if (costAlert.handle(store.prompt.input.trim())) return true
+    if (!steer() && costAlert.handle(store.prompt.input.trim())) return true
     // kilocode_change end
     const agent = local.agent.current()
     if (!agent) return false
@@ -1060,6 +1082,7 @@ export function Prompt(props: PromptProps) {
       sessionID: props.sessionID,
       toast,
       dialog,
+      skip: steer(),
       done: () => {
         history.append({
           ...store.prompt,
@@ -1082,29 +1105,6 @@ export function Prompt(props: PromptProps) {
       void promptModelWarning()
       return false
     }
-
-    // kilocode_change start - gate TUI sends on declared agent requirements
-    const requirements = await AgentRequirements.check({
-      client: sdk.client,
-      agent: agent.name,
-      directory: project.instance.directory() || sdk.directory || process.cwd(),
-    }).catch((error) => {
-      toast.show({
-        message: errorMessage(error),
-        variant: "error",
-      })
-      return undefined
-    })
-    if (!requirements) return false
-    if (!requirements.ok) {
-      toast.show({
-        title: "Agent requirements",
-        message: requirements.error.data.message,
-        variant: "error",
-      })
-      return false
-    }
-    // kilocode_change end
 
     const workspaceSession = props.sessionID ? sync.session.get(props.sessionID) : undefined
     const workspaceID = workspaceSession?.workspaceID
@@ -1191,7 +1191,8 @@ export function Prompt(props: PromptProps) {
           ]
         : []
 
-    if (store.mode === "shell") {
+    const target = sync.session.get(sessionID) // kilocode_change - subagent steering target
+    if (store.mode === "shell" && !steer() /* kilocode_change - subagent views never run shell */) {
       move.startSubmit()
       void sdk.client.session.shell({
         sessionID,
@@ -1204,6 +1205,7 @@ export function Prompt(props: PromptProps) {
       })
       setStore("mode", "normal")
     } else if (
+      !steer() && // kilocode_change - subagent views send slash text as a plain steer
       inputText.startsWith("/") &&
       sync.data.command.some((x) => slashMatches(x, inputText.split("\n")[0].split(" ")[0].slice(1))) // kilocode_change
     ) {
@@ -1223,7 +1225,7 @@ export function Prompt(props: PromptProps) {
         model: `${selectedModel.providerID}/${selectedModel.modelID}`,
         variant,
         parts: nonTextParts.filter((x) => x.type === "file"),
-      })
+      }).then((result) => GoalPrompt.feedback(command.slice(1), args, result, toast)) // kilocode_change
     } else {
       move.startSubmit()
       sdk.client.session
@@ -1234,11 +1236,13 @@ export function Prompt(props: PromptProps) {
             agent: agent.name,
             model: selectedModel,
             variant,
+            ...KiloSteer.prompt(target), // kilocode_change - steer a subagent with its own agent/model
             parts: [
               ...editorParts,
               {
                 type: "text",
                 text: inputText,
+                ...KiloSteer.mark(target), // kilocode_change - mark human steering for the parent notice
               },
               ...nonTextParts,
             ],
@@ -1319,6 +1323,15 @@ export function Prompt(props: PromptProps) {
   async function pasteInputText(text: string) {
     const normalizedText = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
     const pastedContent = normalizedText.trim()
+    // kilocode_change start - a second identical paste expands the collapsed placeholder
+    if (expandPastedPlaceholder(input, promptPartTypeId, store.extmarkToPartIndex, store.prompt.parts, pastedContent)) {
+      const value = input.plainText
+      setStore("prompt", "input", value)
+      auto()?.onInput(value)
+      syncExtmarksWithPromptParts()
+      return
+    }
+    // kilocode_change end
     const filepath = pastedFilepath(pastedContent, terminalEnvironment.platform)
     const isUrl = /^(https?):\/\//.test(filepath)
     if (!isUrl) {
@@ -1440,6 +1453,7 @@ export function Prompt(props: PromptProps) {
   const highlight = createMemo(() => {
     if (leader()) return theme.border
     if (store.mode === "shell") return theme.primary
+    if (subagent()) return subagent()?.color ?? theme.border // kilocode_change - the subagent's color, as in its footer
     const agent = local.agent.current()
     if (!agent) return theme.border
     return local.agent.color(agent.name ?? "") // kilocode_change
@@ -1462,6 +1476,7 @@ export function Prompt(props: PromptProps) {
 
   const placeholderText = createMemo(() => {
     if (props.showPlaceholder === false) return undefined
+    if (subagent()) return `Steer the ${subagent()?.label} subagent...` // kilocode_change
     if (store.mode === "shell") {
       if (!shell().length) return undefined
       const example = shell()[store.placeholder % shell().length]
@@ -1473,7 +1488,7 @@ export function Prompt(props: PromptProps) {
 
   const spinnerDef = createMemo(() => {
     const agent =
-      status().type !== "idle"
+      running(status().type)
         ? (local.agent.list().find((a) => a.name === lastUserMessage()?.agent) ?? local.agent.current())
         : local.agent.current()
     const color = agent ? local.agent.color(agent.name ?? "") : theme.border // kilocode_change
@@ -1543,7 +1558,7 @@ export function Prompt(props: PromptProps) {
                   return
                 }
                 // kilocode_change start - route keys through the vim layer when enabled
-                if (vim.vimOnKey(e)) {
+                if (!(e.name === "escape" && interruptible()) && vim.vimOnKey(e)) {
                   e.preventDefault()
                   e.stopPropagation()
                   return
@@ -1594,16 +1609,21 @@ export function Prompt(props: PromptProps) {
                   // setTimeout is a workaround and needs to be addressed properly
                   if (!input || input.isDestroyed) return
                   input.cursorColor = theme.text
+                  if (tuiConfig.cursor && !vim.vimEnabled()) input.cursorStyle = tuiConfig.cursor // kilocode_change
                 }, 0)
               }}
               onMouseDown={(r: MouseEvent) => r.target?.focus()}
               focusedBackgroundColor={theme.backgroundElement}
               cursorColor={props.disabled ? theme.backgroundElement : theme.text}
+              cursorStyle={tuiConfig.cursor}
               syntaxStyle={syntax()}
             />
             <box flexDirection="row" flexShrink={0} paddingTop={1} gap={1} justifyContent="space-between">
               <box flexDirection="row" gap={1}>
-                <Show when={local.agent.current()} fallback={<box height={1} />}>
+                {/* kilocode_change start - a steer runs as the subagent, so show it instead of the primary agent/model */}
+                <Show when={subagent()}>{(item) => <SteerLabel subagent={item()} />}</Show>
+                {/* kilocode_change end */}
+                <Show when={!subagent() && local.agent.current() /* kilocode_change */} fallback={<box height={1} />}>
                   {(agent) => (
                     <>
                       <text fg={fadeColor(highlight(), agentMetaAlpha())}>
@@ -1626,26 +1646,29 @@ export function Prompt(props: PromptProps) {
                         alpha={agentMetaAlpha}
                       />
                       {/* kilocode_change end */}
-                      <Show when={store.mode === "normal"}>
-                        <box flexDirection="row" gap={1}>
-                          <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>·</text>
-                          <text
-                            flexShrink={0}
-                            fg={fadeColor(leader() ? theme.textMuted : theme.text, modelMetaAlpha())}
-                          >
-                            {local.model.parsed().model}
-                          </text>
-                          <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>{currentProviderLabel()}</text>
-                          <Show when={showVariant()}>
-                            <text fg={fadeColor(theme.textMuted, variantMetaAlpha())}>·</text>
-                            <text>
-                              <span style={{ fg: fadeColor(theme.warning, variantMetaAlpha()), bold: true }}>
-                                {local.model.variant.current()}
-                              </span>
-                            </text>
-                          </Show>
-                        </box>
+                      <Show when={store.mode === "normal" && local.permission.mode === "auto"}>
+                        <text fg={fadeColor(theme.textMuted, agentMetaAlpha())}>auto</text>
                       </Show>
+                      <Show when={store.mode === "normal"}>
+                      <box flexDirection="row" gap={1}>
+                        <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>·</text>
+                        <text
+                          flexShrink={0}
+                          fg={fadeColor(leader() ? theme.textMuted : theme.text, modelMetaAlpha())}
+                        >
+                          {local.model.parsed().model}
+                        </text>
+                        <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>{currentProviderLabel()}</text>
+                        <Show when={showVariant()}>
+                          <text fg={fadeColor(theme.textMuted, variantMetaAlpha())}>·</text>
+                          <text>
+                            <span style={{ fg: fadeColor(theme.warning, variantMetaAlpha()), bold: true }}>
+                              {local.model.variant.current()}
+                            </span>
+                          </text>
+                        </Show>
+                      </box>
+                    </Show>
                     </>
                   )}
                 </Show>
@@ -1687,7 +1710,7 @@ export function Prompt(props: PromptProps) {
         </box>
         <box width="100%" flexDirection="row" justifyContent="space-between">
           <Switch>
-            <Match when={status().type !== "idle"}>
+            <Match when={running(status().type) || goal()?.active /* kilocode_change */}>
               <box
                 flexDirection="row"
                 gap={1}
@@ -1704,7 +1727,9 @@ export function Prompt(props: PromptProps) {
                     {(() => {
                       const retry = createMemo(() => {
                         const s = status()
-                        if (s.type !== "retry") return
+                        // kilocode_change start - render the offline state in this inline error line too
+                        if (s.type !== "retry" && s.type !== "offline") return
+                        // kilocode_change end
                         return s
                       })
                       const message = createMemo(() => {
@@ -1723,7 +1748,10 @@ export function Prompt(props: PromptProps) {
                       const [seconds, setSeconds] = createSignal(0)
                       onMount(() => {
                         const timer = setInterval(() => {
-                          const next = retry()?.next
+                          // kilocode_change start - only the retry state has a countdown target
+                          const s = retry()
+                          const next = s?.type === "retry" ? s.next : undefined
+                          // kilocode_change end
                           if (next) setSeconds(Math.round((next - Date.now()) / 1000))
                         }, 1000)
 
@@ -1743,6 +1771,9 @@ export function Prompt(props: PromptProps) {
                         const r = retry()
                         if (!r) return ""
                         const baseMessage = message()
+                        // kilocode_change start - offline waits on the network probe instead of counting down attempts
+                        if (r.type === "offline") return `${baseMessage} [waiting for network]`
+                        // kilocode_change end
                         const truncatedHint = isTruncated() ? " (click to expand)" : ""
                         const duration = formatDuration(seconds())
                         const retryInfo = ` [retrying ${duration ? `in ${duration} ` : ""}attempt #${r.attempt}]`
@@ -1759,12 +1790,16 @@ export function Prompt(props: PromptProps) {
                     })()}
                   </box>
                 </box>
-                <text fg={store.interrupt > 0 ? theme.primary : theme.text}>
-                  esc{" "}
-                  <span style={{ fg: store.interrupt > 0 ? theme.primary : theme.textMuted }}>
-                    {store.interrupt > 0 ? "again to interrupt" : "interrupt"}
-                  </span>
-                </text>
+                {/* kilocode_change start - the subagent footer shows the interrupt hint in subagent views */}
+                <Show when={!steer()}>
+                  <text fg={store.interrupt > 0 ? theme.primary : theme.text}>
+                    esc{" "}
+                    <span style={{ fg: store.interrupt > 0 ? theme.primary : theme.textMuted }}>
+                      {store.interrupt > 0 ? "again to interrupt" : "interrupt"}
+                    </span>
+                  </text>
+                </Show>
+                {/* kilocode_change end */}
               </box>
             </Match>
             <Match when={workspace.notice()}>
@@ -1817,12 +1852,14 @@ export function Prompt(props: PromptProps) {
                 <text fg={theme.accent}>(new working copy)</text>
               </box>
             </Match>
+            {/* kilocode_change start - Kilo already shows the working directory in its sidebar */}
             <Match when={true}>{props.hint ?? <text />}</Match>
+            {/* kilocode_change end */}
           </Switch>
           <Show when={status().type !== "retry"}>
             <box gap={2} flexDirection="row">
               {/* kilocode_change start - show "ctrl+c again to exit" hint */}
-              <Show when={store.exitPress > 0}>
+              <Show when={quit.count() > 0}>
                 <text fg={theme.primary}>
                   ctrl+c <span style={{ fg: theme.primary }}>again to exit</span>
                 </text>
@@ -1835,6 +1872,11 @@ export function Prompt(props: PromptProps) {
               </Show>
               <Switch>
                 <Match when={store.mode === "normal"}>
+                  <Show when={local.model.variant.list().length > 0}>
+                    <text fg={theme.text}>
+                      {variantShortcut()} <span style={{ fg: theme.textMuted }}>variants</span>
+                    </text>
+                  </Show>
                   <Switch>
                     <Match when={usage()}>
                       {(item) => (

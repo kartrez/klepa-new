@@ -1,34 +1,30 @@
-import { Component, createSignal, createMemo, Switch, Match, Show, onMount, onCleanup } from "solid-js"
-import { ThemeProvider } from "@kilocode/kilo-ui/theme"
-import { DialogProvider } from "@kilocode/kilo-ui/context/dialog"
-import { MarkedProvider } from "@kilocode/kilo-ui/context/marked"
-import { CodeComponentProvider } from "@kilocode/kilo-ui/context/code"
-import { DiffComponentProvider } from "@kilocode/kilo-ui/context/diff"
-import { FileComponentProvider } from "@kilocode/kilo-ui/context/file"
-import { Code } from "@kilocode/kilo-ui/code"
-import { Diff } from "@kilocode/kilo-ui/diff"
-import { File } from "@kilocode/kilo-ui/file"
+import { Component, createSignal, createMemo, createEffect, Switch, Match, Show, onMount, onCleanup } from "solid-js"
 import { DataProvider } from "@kilocode/kilo-ui/context/data"
-import { Toast } from "@kilocode/kilo-ui/toast"
+import { BoardNavigationProvider } from "@kilocode/kilo-ui/context/board-navigation"
 import Settings from "./components/settings/Settings"
-import { VSCodeProvider, useVSCode } from "./context/vscode"
-import { ServerProvider, useServer } from "./context/server"
-import { ProviderProvider, useProvider } from "./context/provider"
-import { ConfigProvider } from "./context/config"
-import { DisplayProvider } from "./context/display"
+import { useVSCode } from "./context/vscode"
+import { useServer } from "./context/server"
+import { useProvider } from "./context/provider"
 import { WorkStyleProvider } from "./context/work-style"
-import { IndexingProvider } from "./context/indexing"
-import { AgentRequirementsProvider } from "./context/agent-requirements"
-import { MemoryProvider } from "./context/memory"
-import { SessionProvider, useSession } from "./context/session"
+import { useSession, useSessionVisibility } from "./context/session"
+import { useConfig } from "./context/config"
 import { LocalTabsProvider, useLocalTabs } from "./context/local-tabs"
-import { LanguageBridge } from "./context/language-bridge"
+import { ProviderShell } from "./context/provider-shell"
 import { ChatView } from "./components/chat"
 import { SidebarEmptyState } from "./components/chat/SidebarEmptyState"
 import { KlepaAuthGate } from "./components/auth/KlepaAuthGate"
+import { SidebarTopBar } from "./components/chat/SidebarTopBar"
+import { openSubagent } from "./components/chat/open-subagent"
 import { registerExpandedTaskTool } from "./components/chat/TaskToolExpanded"
 import { registerVscodeToolOverrides } from "./components/chat/VscodeToolOverrides"
-import { SpeechToTextPrewarm } from "./components/speech-to-text/SpeechToTextPrewarm"
+import { useWorktreeMode } from "./context/worktree-mode"
+import { useDiffStyle } from "./context/diff-style"
+import { dispatchAgentManagerEditPreview } from "./utils/agent-manager-events"
+import { strongest } from "./utils/session-activity"
+import { adjacentTab } from "./utils/local-tabs"
+import { focusPrompt } from "./utils/tab-navigation"
+import { createPlanOpener } from "./utils/open-plan"
+import type { PermissionFileDiff } from "./types/messages"
 
 // Override the upstream "task" tool renderer with the fully-expanded version
 // that shows child session parts inline in the VS Code sidebar.
@@ -37,12 +33,10 @@ registerExpandedTaskTool()
 registerVscodeToolOverrides()
 import HistoryView from "./components/history/HistoryView"
 import { KlepaAccountBar } from "./components/account/KlepaAccountBar"
-import { MigrationWizard } from "./components/migration" // legacy-migration
-import { NotificationsProvider } from "./context/notifications"
-import { FeedbackProvider } from "./context/feedback"
-import { KiloEmbeddingModelsProvider } from "./context/kilo-embedding-models"
-import { ImageModelsProvider } from "./context/image-models"
+import { MigrationWizard } from "./components/migration"
 import type { Message as SDKMessage, Part as SDKPart } from "@kilocode/sdk/v2"
+import { cycleAgent as cycle } from "./context/session-agent"
+import { routeChatInput } from "./utils/chat-input-route"
 import "./styles/chat.css"
 
 type ViewType = "newTask" | "history" | "settings" | "subAgentViewer"
@@ -68,8 +62,11 @@ const VALID_VIEWS = new Set<string>(["newTask", "history", "settings", "subAgent
 export const DataBridge: Component<{ children: any }> = (props) => {
   const session = useSession()
   const vscode = useVSCode()
+  const config = useConfig()
   const prov = useProvider()
   const server = useServer()
+  const worktree = useWorktreeMode()
+  const diffStyle = useDiffStyle()
 
   // Memos for fields that change infrequently (not per-token) — cheap and
   // avoids allocating a fresh array/object on every consumer read.
@@ -139,16 +136,59 @@ export const DataBridge: Component<{ children: any }> = (props) => {
     session.rejectQuestion(input.requestID)
   }
 
-  const open = (filePath: string, line?: number, column?: number) => {
-    vscode.postMessage({ type: "openFile", filePath, line, column })
+  const openAgent = (id: string, title?: string) => {
+    const parent = session.sessions().find((item) => item.id === id)?.parentID ?? session.currentSessionID()
+    openSubagent({
+      sessionID: id,
+      title,
+      parentSessionID: parent,
+      worktree: !!worktree,
+      post: vscode.postMessage,
+    })
   }
 
-  const openDiff = (diff: { file: string; patch?: string; additions: number; deletions: number }) => {
-    vscode.postMessage({ type: "openDiffVirtual", diff, initialDiffStyle: "split" })
+  const open = (filePath: string, line?: number, column?: number, sessionID?: string) => {
+    const event = new CustomEvent("kilo:open-file", {
+      cancelable: true,
+      detail: { filePath, line, column, sessionID },
+    })
+    if (!window.dispatchEvent(event)) return
+    vscode.postMessage({ type: "openFile", filePath, line, column, sessionID })
   }
 
-  const openUrl = (url: string) => {
-    vscode.postMessage({ type: "openExternal", url })
+  const opener = createPlanOpener(session.currentSessionID, (plan) =>
+    open(plan.path, undefined, undefined, plan.sessionID),
+  )
+  const unsubscribePlans = vscode.onMessage(opener.accept)
+  createEffect(() => opener.flush(session.currentSessionID()))
+  onCleanup(unsubscribePlans)
+
+  const openDiff = (diff: PermissionFileDiff) => {
+    if (worktree) {
+      dispatchAgentManagerEditPreview({
+        diff,
+        sessionID: session.currentSessionID(),
+        initialDiffStyle: diffStyle?.style() ?? "unified",
+      })
+      return
+    }
+    vscode.postMessage({ type: "openDiffVirtual", diff, initialDiffStyle: diffStyle?.style() ?? "unified" })
+  }
+
+  const openUrl = (url: string, sessionID?: string) => {
+    const id = sessionID ?? session.currentSessionID()
+    if (
+      worktree &&
+      id &&
+      config.settings().browserAutomation === true &&
+      config.settings().agentManagerBrowserOpenLinksIn === "integrated" &&
+      config.settings().workspaceTrusted === true &&
+      /^https?:\/\//i.test(url)
+    ) {
+      vscode.postMessage({ type: "agentManager.browser.open", sessionId: id, url })
+      return
+    }
+    vscode.postMessage({ type: "openWebLink", url })
   }
 
   const openContent = (content: string, language?: string) => {
@@ -158,17 +198,23 @@ export const DataBridge: Component<{ children: any }> = (props) => {
   // File existence validation for code span candidates
   const pending = new Map<string, (existing: string[]) => void>()
   const counter = { n: 0 }
-  const validateFiles = (paths: string[]): Promise<string[]> => {
+  const validateFiles = (sessionID: string, paths: string[]): Promise<string[]> => {
     const id = `vf-${++counter.n}`
-    return new Promise((resolve) => {
-      pending.set(id, resolve)
-      vscode.postMessage({ type: "validateFiles", id, paths })
-      setTimeout(() => {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
         if (pending.has(id)) {
           pending.delete(id)
-          resolve([])
+          // A timeout is not the same as "checked and none exist" — reject so
+          // callers don't cache a false negative for real files on a slow
+          // filesystem (see file-link-validator.ts).
+          reject(new Error("validateFiles timed out"))
         }
       }, 3000)
+      pending.set(id, (existing) => {
+        clearTimeout(timer)
+        resolve(existing)
+      })
+      vscode.postMessage({ type: "validateFiles", id, sessionID, paths })
     })
   }
   const handler = (event: MessageEvent) => {
@@ -203,57 +249,79 @@ export const DataBridge: Component<{ children: any }> = (props) => {
       onOpenUrl={openUrl}
       onOpenContent={openContent}
       onValidateFiles={validateFiles}
+      browserLinks={
+        config.settings().browserAutomation === true &&
+        config.settings().agentManagerBrowserOpenLinksIn === "integrated" &&
+        config.settings().workspaceTrusted === true
+      }
       onNavigateToSession={(id) => session.selectSession(id)}
     >
-      {props.children}
+      <BoardNavigationProvider open={openAgent}>{props.children}</BoardNavigationProvider>
     </DataProvider>
   )
-}
-
-type MermaidImageEvent = CustomEvent<{ dataUrl: string; filename: string }>
-
-export const MermaidDownloadBridge: Component = () => {
-  const vscode = useVSCode()
-
-  onMount(() => {
-    const save = (event: Event) => {
-      const detail = (event as MermaidImageEvent).detail
-      if (!detail?.dataUrl || !detail.filename) return
-      event.preventDefault()
-      vscode.postMessage({ type: "saveImage", dataUrl: detail.dataUrl, filename: detail.filename })
-    }
-    window.addEventListener("kilo:save-image", save)
-    onCleanup(() => {
-      window.removeEventListener("kilo:save-image", save)
-    })
-  })
-
-  return null
 }
 
 // Inner app component that uses the contexts
 const AppContent: Component = () => {
   const [currentView, setCurrentView] = createSignal<ViewType>("newTask")
   const [settingsTab, setSettingsTab] = createSignal<string | undefined>()
-  // legacy-migration: state-driven flag independent of currentView to avoid
-  // race conditions with SettingsEditorProvider's navigate messages.
-  const [migrationNeeded, setMigrationNeeded] = createSignal(false)
-  const [migrationSource, setMigrationSource] = createSignal<"legacy" | "roo">("legacy")
+  const [settingsSubtab, setSettingsSubtab] = createSignal<string | undefined>()
+  const [settingsFocus, setSettingsFocus] = createSignal<{ token: number; value: string } | undefined>()
+  const [settingsSearch, setSettingsSearch] = createSignal(0)
+  const [agentManagerProjectId, setAgentManagerProjectId] = createSignal<string | undefined>()
+  const [migration, setMigration] = createSignal(false)
   const session = useSession()
   const tabs = useLocalTabs()
   const server = useServer()
   const vscode = useVSCode()
+  const activity = createMemo(() =>
+    strongest([session.currentSessionID(), ...(tabs?.ids() ?? [])].map(session.activityFor)),
+  )
+  createEffect(() => vscode.postMessage({ type: "sessionActivity", state: activity() }))
+  useSessionVisibility(() =>
+    !migration() && (currentView() === "newTask" || currentView() === "subAgentViewer")
+      ? session.currentSessionID()
+      : undefined,
+  )
+
+  const newTask = () => {
+    if (currentView() === "newTask") {
+      window.dispatchEvent(new CustomEvent("newTaskRequest"))
+      return
+    }
+    tabs?.add()
+    if (!tabs) session.clearCurrentSession()
+    setCurrentView("newTask")
+  }
+
+  // Actions handled inside the chat view: show it, then notify its components.
+  const events = new Map([
+    ["focusSearch", "focusTranscriptSearch"],
+    ["showOpenTabs", "showOpenTabs"],
+  ])
 
   const handleViewAction = (action: string) => {
+    const event = events.get(action)
+    if (event) {
+      setCurrentView("newTask")
+      window.dispatchEvent(new CustomEvent(event))
+      return
+    }
     switch (action) {
-      case "plusButtonClicked": {
-        const chat = currentView() === "newTask"
-        if (chat) window.dispatchEvent(new CustomEvent("newTaskRequest"))
-        if (!chat && tabs) tabs.add()
-        if (!chat && !tabs) session.clearCurrentSession()
-        setCurrentView("newTask")
+      case "plusButtonClicked":
+        newTask()
+        break
+      case "closeTask": {
+        if (currentView() !== "newTask") break
+        const id = tabs?.active()
+        if (!tabs || !id) break
+        tabs.close(id)
         break
       }
+      case "closeAllTasks":
+        tabs?.closeAll()
+        setCurrentView("newTask")
+        break
       case "historyButtonClicked":
         setCurrentView("history")
         break
@@ -266,22 +334,38 @@ const AppContent: Component = () => {
       case "cyclePreviousAgentMode":
         if (document.hasFocus()) cycleAgent(-1)
         break
-      case "focusSearch":
-        setCurrentView("newTask")
-        window.dispatchEvent(new CustomEvent("focusTranscriptSearch"))
+      case "tabPrevious":
+        step(-1)
+        break
+      case "tabNext":
+        step(1)
+        break
+      case "focusSettingsSearch":
+        setCurrentView("settings")
+        setSettingsSearch((count) => count + 1)
         break
     }
   }
 
+  // Select the session tab next to the active one, like Agent Manager tab navigation.
+  // The host sends the action to the sidebar and the active editor tab, so only the focused one acts.
+  const step = (offset: -1 | 1) => {
+    if (!tabs || !document.hasFocus() || currentView() !== "newTask") return
+    const id = adjacentTab(tabs.display(), tabs.active(), offset)
+    if (!id) return
+    tabs.select(id)
+    requestAnimationFrame(focusPrompt)
+  }
+
   const cycleAgent = (direction: 1 | -1) => {
-    const available = session.agents().filter((a) => a.mode !== "subagent" && !a.hidden)
-    if (available.length <= 1) return
-    const current = session.selectedAgent()
-    const idx = available.findIndex((a) => a.name === current)
-    const raw = idx + direction
-    const next = raw < 0 ? available.length - 1 : raw >= available.length ? 0 : raw
-    const agent = available[next]
-    if (agent) session.selectAgent(agent.name)
+    const id = session.currentSessionID() ?? tabs?.pending() ?? session.draftSessionID()
+    cycle({
+      agents: session.agents(),
+      scope: id,
+      direction,
+      selected: session.selectedAgent,
+      select: session.selectAgent,
+    })
   }
 
   const handleForked = (message: { type?: string; sessionID?: string; forkedFromID?: string }) => {
@@ -296,6 +380,14 @@ const AppContent: Component = () => {
     if (message.type === "selectKiloModel") setCurrentView("newTask")
   }
 
+  const open = (message: { type?: string; sessionID?: string }) => {
+    if (message.type !== "openSession" || !message.sessionID) return
+    console.log("[Kilo New] App: opening local session:", message.sessionID)
+    if (tabs) tabs.open(message.sessionID, { scrollToBottom: true })
+    if (!tabs) session.selectSession(message.sessionID, { scrollToBottom: true })
+    setCurrentView("newTask")
+  }
+
   onMount(() => {
     const handler = (event: MessageEvent) => {
       const message = event.data
@@ -306,6 +398,9 @@ const AppContent: Component = () => {
       if (message?.type === "navigate" && message.view && VALID_VIEWS.has(message.view)) {
         console.log("[Kilo New] App: 🧭 navigate:", message.view, message.tab ? `tab=${message.tab}` : "")
         if (message.tab) setSettingsTab(message.tab)
+        if (message.subtab) setSettingsSubtab(message.subtab)
+        if (message.focus) setSettingsFocus((prev) => ({ token: (prev?.token ?? 0) + 1, value: message.focus! }))
+        setAgentManagerProjectId(message.projectId)
         setCurrentView(message.view as ViewType)
         vscode.postMessage({ type: "settingsTabChanged", tab: message.tab })
       }
@@ -314,18 +409,19 @@ const AppContent: Component = () => {
         session.selectCloudSession(message.sessionId)
         setCurrentView("newTask")
       }
+      open(message)
       handleKiloModel(message)
       handleForked(message)
+      routeChatInput(
+        message,
+        currentView(),
+        () => setCurrentView("newTask"),
+        (msg) => window.postMessage(msg, window.origin),
+      )
       if (message?.type === "viewSubAgentSession" && message.sessionID) {
         console.log("[Kilo New] App: 🔍 viewSubAgentSession:", message.sessionID)
         session.setCurrentSessionID(message.sessionID)
         setCurrentView("subAgentViewer")
-      }
-      // legacy-migration: state-driven migration wizard
-      if (message?.type === "migrationState") {
-        console.log("[Kilo New] App: 🔄 migrationState:", message.needed)
-        setMigrationSource(message.source)
-        setMigrationNeeded(message.needed)
       }
     }
     window.addEventListener("message", handler)
@@ -346,120 +442,104 @@ const AppContent: Component = () => {
     <SidebarEmptyState onSelectSession={handleSelectSession} onShowHistory={() => setCurrentView("history")} />
   )
 
+  // Set synchronously in the webview HTML by KiloProvider so it's available
+  // before this component ever mounts (see buildWebviewHtml/_getHtmlForWebview).
+  // False for dedicated single-purpose panels (Settings, Profile, Sub-Agent
+  // Viewer) always, and for the Sidebar/"Open in Tab" outside Cursor — real
+  // VS Code's native title bar toolbar already covers those. Defaults to
+  // true only when unset entirely (e.g. Storybook, which doesn't render the
+  // real page HTML).
+  const host = window as {
+    KILO_TOP_BAR?: boolean
+    KILO_TOP_BAR_SURFACE?: string
+    KILO_AGENT_MANAGER_SETTINGS?: boolean
+  }
+  const showTopBar = host.KILO_TOP_BAR !== false
+  const topBarSurface = host.KILO_TOP_BAR_SURFACE ?? "sidebar_title"
+
   return (
     <div class="container">
       <KlepaAuthGate>
         <KlepaAccountBar />
         <div class="container-main">
-        {/* legacy-migration start — state-driven overlay, independent of currentView */}
-      <Show
-        when={migrationNeeded()}
-        fallback={
-          <Switch
+          <Show when={showTopBar}>
+            <SidebarTopBar
+              onNewTask={() => handleViewAction("plusButtonClicked")}
+              onHistory={() => handleViewAction("historyButtonClicked")}
+              surface={topBarSurface}
+            />
+          </Show>
+          <Show
+            when={migration()}
             fallback={
-              <ChatView
-                continueInWorktree
-                onForkMessage={session.status() === "idle" ? handleForkMessage : undefined}
-                promptBoxId="sidebar:fallback"
-                emptyState={emptyState}
-              />
+              <Switch
+                fallback={
+                  <ChatView
+                    continueInWorktree
+                    onForkMessage={session.status() === "idle" ? handleForkMessage : undefined}
+                    promptBoxId="sidebar:fallback"
+                    emptyState={emptyState}
+                  />
+                }
+              >
+                <Match when={currentView() === "newTask"}>
+                  <ChatView
+                    onSelectSession={handleSelectSession}
+                    onShowHistory={() => setCurrentView("history")}
+                    onForkMessage={session.status() === "idle" ? handleForkMessage : undefined}
+                    continueInWorktree
+                    promptBoxId="sidebar:new-task"
+                    emptyState={emptyState}
+                  />
+                </Match>
+                <Match when={currentView() === "history"}>
+                  <HistoryView onSelectSession={handleSelectSession} onBack={() => setCurrentView("newTask")} />
+                </Match>
+                <Match when={currentView() === "settings"}>
+                  <Settings
+                    tab={settingsTab()}
+                    subtab={settingsSubtab()}
+                    focus={settingsFocus()}
+                    agentManagerProjectId={agentManagerProjectId()}
+                    agentManagerSettings={host.KILO_AGENT_MANAGER_SETTINGS === true}
+                    onTabChange={setSettingsTab}
+                    onAgentBehaviourNavigationConsumed={() => {
+                      setSettingsSubtab(undefined)
+                      setSettingsFocus(undefined)
+                    }}
+                    onMigrationClick={() => setMigration(true)}
+                    searchRequest={settingsSearch()}
+                  />
+                </Match>
+                <Match when={currentView() === "subAgentViewer"}>
+                  <ChatView readonly />
+                </Match>
+              </Switch>
             }
           >
-            <Match when={currentView() === "newTask"}>
-              <ChatView
-                onSelectSession={handleSelectSession}
-                onShowHistory={() => setCurrentView("history")}
-                onForkMessage={session.status() === "idle" ? handleForkMessage : undefined}
-                continueInWorktree
-                promptBoxId="sidebar:new-task"
-                emptyState={emptyState}
-              />
-            </Match>
-            <Match when={currentView() === "history"}>
-              <HistoryView onSelectSession={handleSelectSession} onBack={() => setCurrentView("newTask")} />
-            </Match>
-            <Match when={currentView() === "settings"}>
-              <Settings
-                tab={settingsTab()}
-                onTabChange={setSettingsTab}
-                onMigrationClick={(source) => {
-                  setMigrationSource(source)
-                  setMigrationNeeded(true)
-                }}
-              />
-            </Match>
-            <Match when={currentView() === "subAgentViewer"}>
-              <ChatView readonly />
-            </Match>
-          </Switch>
-        }
-      >
-        <MigrationWizard
-          source={migrationSource()}
-          onBack={() => setMigrationNeeded(false)}
-          onComplete={() => setMigrationNeeded(false)}
-        />
-      </Show>
-      {/* legacy-migration end */}
+            <MigrationWizard onBack={() => setMigration(false)} onComplete={() => setMigration(false)} />
+          </Show>
         </div>
       </KlepaAuthGate>
     </div>
   )
 }
 
-// Main App component with context providers
 const App: Component = () => {
   return (
-    <ThemeProvider defaultTheme="kilo-vscode">
-      <DialogProvider>
-        <VSCodeProvider>
-          <MermaidDownloadBridge />
-          <ServerProvider>
-            <LanguageBridge>
-              <MarkedProvider>
-                <DiffComponentProvider component={Diff}>
-                  <CodeComponentProvider component={Code}>
-                    <FileComponentProvider component={File}>
-                      <ProviderProvider>
-                        <ConfigProvider>
-                          <SpeechToTextPrewarm />
-                          <DisplayProvider>
-                            <WorkStyleProvider>
-                              <IndexingProvider>
-                                <KiloEmbeddingModelsProvider>
-                                  <ImageModelsProvider>
-                                    <NotificationsProvider>
-                                      <SessionProvider>
-                                        <LocalTabsProvider>
-                                          <AgentRequirementsProvider>
-                                            <MemoryProvider>
-                                              <FeedbackProvider>
-                                                <DataBridge>
-                                                  <AppContent />
-                                                </DataBridge>
-                                              </FeedbackProvider>
-                                            </MemoryProvider>
-                                          </AgentRequirementsProvider>
-                                        </LocalTabsProvider>
-                                      </SessionProvider>
-                                    </NotificationsProvider>
-                                  </ImageModelsProvider>
-                                </KiloEmbeddingModelsProvider>
-                              </IndexingProvider>
-                            </WorkStyleProvider>
-                          </DisplayProvider>
-                        </ConfigProvider>
-                      </ProviderProvider>
-                    </FileComponentProvider>
-                  </CodeComponentProvider>
-                </DiffComponentProvider>
-              </MarkedProvider>
-            </LanguageBridge>
-          </ServerProvider>
-        </VSCodeProvider>
-        <Toast.Region />
-      </DialogProvider>
-    </ThemeProvider>
+    <ProviderShell.Root>
+      <WorkStyleProvider>
+        <ProviderShell.Session>
+          <LocalTabsProvider>
+            <ProviderShell.Chat>
+              <DataBridge>
+                <AppContent />
+              </DataBridge>
+            </ProviderShell.Chat>
+          </LocalTabsProvider>
+        </ProviderShell.Session>
+      </WorkStyleProvider>
+    </ProviderShell.Root>
   )
 }
 

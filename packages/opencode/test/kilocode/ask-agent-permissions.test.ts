@@ -19,7 +19,6 @@ function askRuleset() {
     question: "allow",
     webfetch: "allow",
     websearch: "allow",
-    codebase_search: "allow",
   })
 }
 
@@ -47,7 +46,6 @@ function askRulesetWithMcp(servers: string[], user: Permission.Ruleset = []) {
       question: "allow",
       webfetch: "allow",
       websearch: "allow",
-      codebase_search: "allow",
       ...mcpRules,
     }),
     user,
@@ -208,9 +206,9 @@ describe("Ask agent bash permissions", () => {
     }
   })
 
-  test("gh commands → ask", () => {
-    expect(Permission.evaluate("bash", "gh pr view 123", ruleset).action).toBe("ask")
-    expect(Permission.evaluate("bash", "gh issue list", ruleset).action).toBe("ask")
+  test("read-only gh commands allow while gh api asks", () => {
+    expect(Permission.evaluate("bash", "gh pr view 123", ruleset).action).toBe("allow")
+    expect(Permission.evaluate("bash", "gh issue list", ruleset).action).toBe("allow")
     expect(Permission.evaluate("bash", "gh api repos/org/repo", ruleset).action).toBe("ask")
   })
 })
@@ -224,7 +222,7 @@ describe("Ask agent tool disabled checks", () => {
   })
 
   test("allowed tools are not disabled", () => {
-    const tools = ["read", "grep", "glob", "list", "question", "webfetch", "websearch", "codebase_search"]
+    const tools = ["read", "grep", "glob", "list", "question", "webfetch", "websearch"]
     const result = Permission.disabled(tools, ruleset)
     for (const tool of tools) {
       expect(result.has(tool)).toBe(false)

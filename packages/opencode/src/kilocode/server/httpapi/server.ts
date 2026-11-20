@@ -1,51 +1,59 @@
 import { Layer } from "effect"
 import { FetchHttpClient, HttpMiddleware, HttpRouter, HttpServer } from "effect/unstable/http"
-import { CorsConfig, isAllowedCorsOrigin, type CorsOptions } from "@/server/cors"
+import { CorsConfig, isAllowedCorsOrigin, type CorsOptions } from "@opencode-ai/server/cors"
 import { compressionLayer } from "@/server/routes/instance/httpapi/middleware/compression"
 import { corsVaryFix } from "@/server/routes/instance/httpapi/middleware/cors-vary"
 import { errorLayer } from "@/server/routes/instance/httpapi/middleware/error"
 import { fenceLayer } from "@/server/routes/instance/httpapi/middleware/fence"
 import * as AnacondaDesktop from "@/kilocode/anaconda-desktop/service"
-import { BackgroundJob } from "@/background/job"
+import { SessionHost } from "@/kilocode/session-hosting"
+import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
+import { AppNodeBuilderV1 } from "@/effect/app-node-builder-v1" // kilocode_change - defaultLayer aliases are gone
 
 import { KiloViewers } from "@/kilocode/presence/service" // kilocode_change
 import { agentBuilderHandlers } from "./handlers/agent-builder"
+import { agentUsageHandlers } from "./handlers/agent-usage"
 import { anacondaDesktopHandlers } from "./handlers/anaconda-desktop"
 import { backgroundProcessHandlers } from "./handlers/background-process"
 import { branchNameHandlers } from "./handlers/branch-name"
 import { commitMessageHandlers } from "./handlers/commit-message"
+import { cloudAgentHandlers } from "./handlers/cloud-agent"
 import { configConsoleHandlers } from "./handlers/config-console"
 import { enhancePromptHandlers } from "./handlers/enhance-prompt"
 import { indexingHandlers } from "./handlers/indexing"
 import { instanceReloadHandlers } from "./handlers/instance-reload"
-import { interactiveTerminalHandlers } from "./handlers/interactive-terminal"
 import { kiloGatewayHandlers } from "./handlers/kilo-gateway"
 import { kilocodeHandlers } from "./handlers/kilocode"
 import { memoryHandlers } from "./handlers/memory"
+import { migrateHandlers } from "./handlers/migrate"
 import { networkHandlers } from "./handlers/network"
 import { remoteHandlers } from "./handlers/remote"
 import { sandboxHandlers } from "./handlers/sandbox"
+import { sessionHostHandlers } from "./handlers/session-host"
 import { sessionImportHandlers } from "./handlers/session-import"
 import { suggestionHandlers } from "./handlers/suggestion"
 import { telemetryHandlers } from "./handlers/telemetry"
 
 export const provide = Layer.provide([
   agentBuilderHandlers,
+  agentUsageHandlers,
   anacondaDesktopHandlers.pipe(Layer.provide(AnacondaDesktop.liveLayer)),
   backgroundProcessHandlers,
   branchNameHandlers,
   commitMessageHandlers,
+  cloudAgentHandlers,
   configConsoleHandlers,
   enhancePromptHandlers,
   indexingHandlers,
   instanceReloadHandlers,
-  interactiveTerminalHandlers,
   kiloGatewayHandlers,
   kilocodeHandlers,
   memoryHandlers,
+  migrateHandlers,
   networkHandlers,
   remoteHandlers,
-  sandboxHandlers.pipe(Layer.provide(BackgroundJob.defaultLayer)),
+  sandboxHandlers,
+  sessionHostHandlers.pipe(Layer.provide(SessionHost.layer())),
   sessionImportHandlers,
   suggestionHandlers,
   telemetryHandlers,
@@ -66,6 +74,7 @@ export function provideListener(opts?: CorsOptions) {
     fenceLayer,
     cors,
     KiloViewers.defaultLayer, // kilocode_change
+    AppNodeBuilderV1.build(EffectFlock.node),
     FetchHttpClient.layer,
     HttpServer.layerServices,
     Layer.succeed(CorsConfig)(opts),

@@ -2,6 +2,8 @@ import "./init-projectors"
 
 import { NodeHttpServer } from "@effect/platform-node"
 import { serverUrls } from "@/kilocode/cli/server-urls" // kilocode_change
+import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
+import { Pty } from "@opencode-ai/core/pty" // kilocode_change
 import { ConfigProvider, Context, Effect, Exit, Layer, Scope } from "effect"
 import { HttpRouter, HttpServer } from "effect/unstable/http"
 import { OpenApi } from "effect/unstable/httpapi"
@@ -11,7 +13,7 @@ import { HttpApiApp } from "./routes/instance/httpapi/server"
 import { disposeMiddleware } from "./routes/instance/httpapi/lifecycle"
 import { WebSocketTracker } from "./routes/instance/httpapi/websocket-tracker"
 import { PublicApi } from "./routes/instance/httpapi/public"
-import type { CorsOptions } from "./cors"
+import type { CorsOptions } from "@opencode-ai/server/cors"
 import { lazy } from "@/util/lazy"
 import * as KiloListener from "@/kilocode/server/listener" // kilocode_change
 
@@ -76,7 +78,7 @@ export async function openapi() {
   return OpenApi.fromApi(PublicApi)
 }
 
-export let url: URL
+export let url: URL | undefined
 
 export async function listen(opts: ListenOptions): Promise<Listener> {
   const listener = await Effect.runPromise(listenEffect(opts))
@@ -94,27 +96,27 @@ const listenEffect: (opts: ListenOptions) => Effect.Effect<EffectListener, unkno
     const state = yield* startWithPortFallback(opts)
     const address = yield* tcpAddress(state)
     const listenerUrl = makeURL(opts.hostname, address.port)
-    url = listenerUrl
-
     const unpublishMdns = yield* setupMdns(opts, address.port, state.scope)
+    url = listenerUrl
 
     return {
       hostname: opts.hostname,
       port: address.port,
       url: listenerUrl,
       urls: serverUrls(opts.hostname, address.port), // kilocode_change
-      stop: yield* makeStop(state, unpublishMdns),
+      stop: yield* makeStop(state, unpublishMdns, listenerUrl),
     }
   },
 )
 
 function listenerLayer(opts: ListenOptions, port: number) {
-  return HttpRouter.serve(HttpApiApp.createListenerRoutes(opts), { // kilocode_change
+  return HttpRouter.serve(HttpApiApp.createListenerRoutes(opts), {
+    // kilocode_change
     middleware: disposeMiddleware,
     disableLogger: true,
     disableListenLog: true,
   }).pipe(
-    Layer.provideMerge(WebSocketTracker.layer),
+    Layer.provideMerge(AppNodeBuilder.build(WebSocketTracker.node)),
     Layer.provideMerge(serverLayer({ port, hostname: opts.hostname })),
     // Install a fresh `ConfigProvider` per listener so `Config.string(...)`
     // reads reflect the current `process.env`. Effect's default
@@ -134,7 +136,8 @@ function startWithPortFallback(opts: ListenOptions) {
 
 function startListener(opts: ListenOptions, port: number) {
   const scope = Scope.makeUnsafe()
-  return KiloListener.build(listenerLayer(opts, port), scope).pipe( // kilocode_change
+  return KiloListener.build(listenerLayer(opts, port), scope).pipe(
+    // kilocode_change
     Effect.provide(HttpApiApp.context),
     Effect.onError(() => Scope.close(scope, Exit.void).pipe(Effect.ignore)),
     Effect.map(
@@ -180,15 +183,25 @@ function setupMdns(opts: ListenOptions, port: number, scope: Scope.Scope) {
   })
 }
 
-function makeStop(state: ListenerState, unpublishMdns: Effect.Effect<void>) {
+function makeStop(state: ListenerState, unpublishMdns: Effect.Effect<void>, listenerUrl: URL) {
   return Effect.gen(function* () {
     const forceCloseOnce = yield* Effect.cached(forceClose(state).pipe(Effect.ignore))
-    const closeScopeOnce = yield* Effect.cached(Scope.close(state.scope, Exit.void).pipe(Effect.ignore))
+    const closeScopeOnce = yield* Effect.cached(
+      Scope.close(state.scope, Exit.void).pipe(
+        Effect.ignore,
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (url === listenerUrl) url = undefined
+          }),
+        ),
+      ),
+    )
 
     return (close?: boolean) =>
       Effect.gen(function* () {
         yield* unpublishMdns
         if (close) yield* forceCloseOnce
+        if (close) yield* Effect.promise(() => Pty.shutdown()) // kilocode_change
         yield* closeScopeOnce
       })
   })

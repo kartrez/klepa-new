@@ -8,12 +8,23 @@ declare module "solid-js" {
 
 import { createSortable, useDragDropContext, type Transformer } from "@thisbeyond/solid-dnd"
 import { createRoot, onCleanup, type Component, type ParentComponent } from "solid-js"
+import { promptMentionDragging, outsideTabBar } from "../../utils/prompt-mention-drop"
 
+export { outsideTabBar }
+
+/**
+ * Keep tab drags in the tab bar normally, but allow a session tab to move down
+ * out of the bar while it is being dragged to the prompt.
+ */
 export const ConstrainDragYAxis: Component = () => {
   const context = useDragDropContext()
   if (!context) return null
   const [, { onDragStart, onDragEnd, addTransformer, removeTransformer }] = context
-  const transformer: Transformer = { id: "constrain-y-axis", order: 100, callback: (value) => ({ ...value, y: 0 }) }
+  const transformer: Transformer = {
+    id: "constrain-y-axis",
+    order: 100,
+    callback: (value) => ({ ...value, y: promptMentionDragging() ? Math.max(0, value.y) : 0 }),
+  }
   const dispose = createRoot((cleanup) => {
     onDragStart(({ draggable }) => {
       if (draggable) addTransformer("draggables", draggable.id as string, transformer)
@@ -27,13 +38,13 @@ export const ConstrainDragYAxis: Component = () => {
   return null
 }
 
-export const SortableTabContainer: ParentComponent<{ id: string }> = (props) => {
+export const SortableTabContainer: ParentComponent<{ id: string; class?: string }> = (props) => {
   const sortable = createSortable(props.id)
   void sortable
   return (
     <div
       use:sortable
-      class="am-tab-sortable"
+      class={props.class ?? "am-tab-sortable"}
       classList={{ "am-tab-dragging": sortable.isActiveDraggable }}
       data-tab-id={props.id}
     >

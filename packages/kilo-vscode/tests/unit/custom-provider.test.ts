@@ -118,7 +118,7 @@ describe("sanitizeCustomProviderConfig", () => {
       models: { "model-1": { name: "Model One" } },
     })
 
-    expect("error" in result ? result.error : "").toContain("Invalid enum value")
+    expect("error" in result ? result.error : "").toContain("Invalid option")
   })
 
   it("accepts supported thinking variant options", () => {
@@ -158,6 +158,35 @@ describe("sanitizeCustomProviderConfig", () => {
             },
           },
         },
+      },
+    })
+  })
+
+  it("preserves opaque options on existing variants", () => {
+    const variant = {
+      thinking: { type: "adaptive", display: "summarized" },
+      reasoningEffort: "max",
+      reasoningSummary: "auto",
+      include: ["reasoning.encrypted_content"],
+      customOption: { enabled: true },
+    }
+    const result = sanitizeCustomProviderConfig({
+      name: "Thinking Provider",
+      options: { baseURL: "https://example.com/v1" },
+      models: {
+        "model-1": {
+          name: "Model One",
+          variants: { high: variant },
+        },
+      },
+    })
+
+    expect(result).toEqual({
+      value: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Thinking Provider",
+        options: { baseURL: "https://example.com/v1" },
+        models: { "model-1": { name: "Model One", variants: { high: variant } } },
       },
     })
   })

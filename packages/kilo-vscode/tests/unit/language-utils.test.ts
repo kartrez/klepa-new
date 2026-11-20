@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test"
-import { DEFAULT_LOCALE, normalizeLocale, resolveTemplate } from "../../webview-ui/src/context/language-utils"
+import { DEFAULT_LOCALE, localeToBcp47, normalizeLocale, resolveTemplate } from "../../webview-ui/src/context/language-utils"
 
 describe("normalizeLocale", () => {
   it("returns 'en' for English", () => {
@@ -22,6 +22,14 @@ describe("normalizeLocale", () => {
   it("is case-insensitive", () => {
     expect(normalizeLocale("EN")).toBe("en")
     expect(normalizeLocale("RU")).toBe("ru")
+  })
+})
+
+describe("localeToBcp47", () => {
+  it("maps internal locale ids before passing them to Intl", () => {
+    expect(localeToBcp47("en")).toBe("en")
+    expect(localeToBcp47("ru")).toBe("ru")
+    expect(new Intl.PluralRules(localeToBcp47("en")).select(2)).toBe("other")
   })
 })
 

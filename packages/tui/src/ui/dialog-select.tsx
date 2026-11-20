@@ -9,9 +9,9 @@ import {
 import type { Binding } from "@opentui/keymap"
 import { useTheme, selectedForeground } from "../context/theme"
 import { entries, filter, flatMap, groupBy, pipe } from "remeda"
-import { batch, createEffect, createMemo, createSignal, For, Show, type JSX, on } from "solid-js"
+import { batch, createEffect, createMemo, createSignal, For, Show, type JSX, on, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
-import { useTerminalDimensions } from "@opentui/solid"
+import { useRenderer, useTerminalDimensions } from "@opentui/solid" // kilocode_change - renderer gates list jump keys while an input is focused
 import * as fuzzysort from "fuzzysort"
 import { isDeepEqual } from "remeda"
 import { useDialog, type DialogContext } from "./dialog"
@@ -25,6 +25,7 @@ export interface DialogSelectProps<T> {
   titleView?: JSX.Element
   placeholder?: string
   footer?: JSX.Element
+  emptyView?: JSX.Element
   options: DialogSelectOption<T>[]
   flat?: boolean
   ref?: (ref: DialogSelectRef<T>) => void
@@ -34,6 +35,7 @@ export interface DialogSelectProps<T> {
   skipFilter?: boolean
   renderFilter?: boolean
   locked?: boolean
+  preserveSelection?: boolean
   actions?: DialogSelectAction<T>[] // kilocode_change - supports actions without a selected option
   footerHints?: {
     title: string
@@ -90,6 +92,13 @@ export type DialogSelectRef<T> = {
   moveTo(value: T): void
 }
 
+// kilocode_change start - Home/End shadow text editing in a focused dialog filter
+function isConflictKey(binding: { key: Binding["key"] }) {
+  const name = typeof binding.key === "string" ? binding.key : binding.key.name
+  return name === "home" || name === "end"
+}
+// kilocode_change end
+
 export function DialogSelect<T>(props: DialogSelectProps<T>) {
   type Action = NonNullable<DialogSelectProps<T>["actions"]>[number]
   type FooterHint = NonNullable<DialogSelectProps<T>["footerHints"]>[number]
@@ -107,6 +116,9 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   })
   const [focusedAction, setFocusedAction] = createSignal<number>()
   const actionFocused = createMemo(() => focusedAction() !== undefined)
+  let selection: { value: T; category?: string } | undefined
+  let resetSelection = false
+  let visibilityGeneration = 0
 
   createEffect(
     on(
@@ -116,6 +128,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
           const currentIndex = flat().findIndex((opt) => isDeepEqual(opt.value, current))
           if (currentIndex >= 0) {
             setStore("selected", currentIndex)
+            selection = flat()[currentIndex]
           }
         }
       },
@@ -219,15 +232,74 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   })
 
   const dimensions = useTerminalDimensions()
+  const renderer = useRenderer() // kilocode_change - gate list jump keys while an input is focused
   const height = createMemo(() => Math.min(rows(), Math.floor(dimensions().height / 2) - 6))
 
   const selected = createMemo(() => flat()[store.selected])
 
   createEffect(
+    on(
+      () => props.options,
+      () => {
+        if (!props.preserveSelection) return
+        if (resetSelection && store.filter.length > 0) {
+          const option = flat()[0]
+          if (!option) return
+          setStore("selected", 0)
+          selection = option
+          return
+        }
+        if (!selection) {
+          if (props.current !== undefined) {
+            const index = flat().findIndex((option) => isDeepEqual(option.value, props.current))
+            if (index >= 0) {
+              setStore("selected", index)
+              selection = flat()[index]
+              return
+            }
+          }
+          const option = selected()
+          if (!option) return
+          selection = option
+          return
+        }
+        const previous = selection
+        const index = flat().findIndex((option) => isDeepEqual(option.value, previous.value))
+        if (index >= 0) {
+          const option = flat()[index]
+          const moved = index !== store.selected || option.category !== previous.category
+          setStore("selected", index)
+          selection = option
+          if (!moved) return
+          const value = option.value
+          const generation = ++visibilityGeneration
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              if (generation !== visibilityGeneration) return
+              if (!props.preserveSelection || store.filter.length > 0) return
+              if (!isDeepEqual(selected()?.value, value)) return
+              scrollToSelection(false)
+            })
+          })
+          return
+        }
+        const next = Math.min(store.selected, flat().length - 1)
+        if (next < 0) return
+        setStore("selected", next)
+        selection = flat()[next]
+      },
+    ),
+  )
+  onCleanup(() => {
+    visibilityGeneration++
+  })
+
+  createEffect(
     on([() => store.filter, () => props.current], ([filter, current]) => {
+      if (filter.length > 0) resetSelection = true
       setTimeout(() => {
         if (filter.length > 0) {
-          moveTo(0, true)
+          moveTo(0, true, false)
         } else if (current) {
           const currentIndex = flat().findIndex((opt) => isDeepEqual(opt.value, current))
           if (currentIndex >= 0) {
@@ -247,11 +319,19 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     moveTo(next, true)
   }
 
-  function moveTo(next: number, center = false) {
+  function moveTo(next: number, center = false, preserve = true) {
     setFocusedAction(undefined)
     setStore("selected", next)
     const option = selected()
+    if (option) {
+      selection = option
+      resetSelection = !preserve
+    }
     if (option) props.onMove?.(option)
+    scrollToSelection(center)
+  }
+
+  function scrollToSelection(center: boolean) {
     if (!scroll) return
     let remaining = store.selected
     let index = 0
@@ -277,7 +357,8 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
       }
       if (y < 0) {
         scroll.scrollBy(y)
-        if (isDeepEqual(flat()[0].value, selected()?.value)) {
+        if (flat()[0] === selected()) {
+          // kilocode_change - reference identity; duplicate values are legal (see `active`)
           scroll.scrollTo(0)
         }
       }
@@ -350,26 +431,9 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
             move(10)
           },
         },
-        {
-          name: "dialog.select.home",
-          title: "First item",
-          category: "Dialog",
-          run() {
-            if (props.locked) return
-            setStore("input", "keyboard")
-            moveTo(0)
-          },
-        },
-        {
-          name: "dialog.select.end",
-          title: "Last item",
-          category: "Dialog",
-          run() {
-            if (props.locked) return
-            setStore("input", "keyboard")
-            moveTo(flat().length - 1)
-          },
-        },
+        // kilocode_change start - dialog.select.home/end live in the gated
+        // layer below so they do not shadow text editing in the filter input
+        // kilocode_change end
         {
           name: "dialog.select.submit",
           title: "Select item",
@@ -402,9 +466,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
           "dialog.select.next",
           "dialog.select.page_up",
           "dialog.select.page_down",
-          "dialog.select.home",
-          "dialog.select.end",
-          "dialog.select.submit",
+          "dialog.select.submit", // kilocode_change - home/end stay with the focused input
         ]),
         ...visible.flatMap((item) => tuiConfig.keybinds.get(item.command)),
         ...(visible.length
@@ -430,6 +492,42 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
       ],
     }
   })
+
+  // kilocode_change start - keep home/end text movement while the dialog filter
+  // holds text. Only the conflicting home/end key bindings are gated, so custom
+  // bindings for the same commands (e.g. F6/F7) keep working.
+  const jumpCommands = [
+    {
+      name: "dialog.select.home",
+      title: "First item",
+      category: "Dialog",
+      run() {
+        if (props.locked) return
+        setStore("input", "keyboard")
+        moveTo(0)
+      },
+    },
+    {
+      name: "dialog.select.end",
+      title: "Last item",
+      category: "Dialog",
+      run() {
+        if (props.locked) return
+        setStore("input", "keyboard")
+        moveTo(flat().length - 1)
+      },
+    },
+  ]
+  const allJumpBindings = () =>
+    tuiConfig.keybinds.gather("dialog.select.jump", ["dialog.select.home", "dialog.select.end"])
+  useBindings(() => {
+    const editor = renderer.currentFocusedEditor
+    const filterHasText = store.filter.length > 0
+    const gateConflicts = editor === input && filterHasText
+    const bindings = allJumpBindings().filter((binding) => !gateConflicts || !isConflictKey(binding))
+    return { commands: jumpCommands, bindings }
+  })
+  // kilocode_change end
 
   let scroll: ScrollBoxRenderable | undefined
   const ref: DialogSelectRef<T> = {
@@ -528,6 +626,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
               }}
               focusedBackgroundColor={theme.backgroundPanel}
               cursorColor={theme.primary}
+              cursorStyle={tuiConfig.cursor}
               focusedTextColor={theme.textMuted}
               ref={(r) => {
                 input = r
@@ -548,9 +647,11 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
         <Show
           when={grouped().length > 0}
           fallback={
-            <box paddingLeft={4} paddingRight={4} paddingTop={1}>
-              <text fg={theme.textMuted}>No results found</text>
-            </box>
+            props.emptyView ?? (
+              <box paddingLeft={4} paddingRight={4} paddingTop={1}>
+                <text fg={theme.textMuted}>No results found</text>
+              </box>
+            )
           }
         >
           <scrollbox
@@ -580,7 +681,11 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
                   </Show>
                   <For each={options}>
                     {(option) => {
-                      const active = createMemo(() => !props.locked && isDeepEqual(option.value, selected()?.value))
+                      // kilocode_change start - match the selected row by reference, not by value: the
+                      // model picker legitimately lists the same model twice (Recent + its provider
+                      // section), and value equality would light up / target both rows
+                      const active = createMemo(() => !props.locked && option === selected())
+                      // kilocode_change end
                       const current = createMemo(() => isDeepEqual(option.value, props.current))
                       return (
                         <box
@@ -599,13 +704,13 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
                           onMouseOver={() => {
                             if (props.locked) return
                             if (store.input !== "mouse") return
-                            const index = flat().findIndex((x) => isDeepEqual(x.value, option.value))
+                            const index = flat().indexOf(option) // kilocode_change - see `active` above
                             if (index === -1) return
                             moveTo(index)
                           }}
                           onMouseDown={() => {
                             if (props.locked) return
-                            const index = flat().findIndex((x) => isDeepEqual(x.value, option.value))
+                            const index = flat().indexOf(option) // kilocode_change - see `active` above
                             if (index === -1) return
                             moveTo(index)
                           }}

@@ -12,7 +12,6 @@ import { AgentCommand } from "../../src/cli/cmd/agent"
 import { UpgradeCommand } from "../../src/cli/cmd/upgrade"
 import { UninstallCommand } from "../../src/cli/cmd/uninstall"
 import { ServeCommand } from "../../src/cli/cmd/serve"
-import { WebCommand } from "../../src/cli/cmd/web"
 import { ModelsCommand } from "../../src/cli/cmd/models"
 import { StatsCommand } from "../../src/cli/cmd/stats"
 import { ExportCommand } from "../../src/cli/cmd/export"
@@ -64,7 +63,6 @@ const commands = [
   UpgradeCommand,
   UninstallCommand,
   ServeCommand,
-  WebCommand,
   ModelsCommand,
   StatsCommand,
   ExportCommand,
@@ -128,6 +126,14 @@ describe("kilo help <command>", () => {
     expect(output).not.toContain("## kilo debug")
   })
 
+  test("documents pr subcommands", async () => {
+    const output = await generateHelp({ command: "pr", format: "md", commands })
+    expect(output).toContain("kilo pr checkout")
+    expect(output).toContain("kilo pr link")
+    expect(output).toContain("kilo pr unlink")
+    expect(output).toContain("kilo pr status")
+  })
+
   test("documents console stop and foreground mode", async () => {
     const output = await generateHelp({ command: "console", format: "md", commands })
     expect(output).toContain("kilo console stop")
@@ -163,6 +169,12 @@ describe("kilo cloud help", () => {
     const help = await (await parser()).getHelp()
     const names = [...help.matchAll(/^\s*kilo cloud ([a-z][a-z-]*)\b/gm)].map((match) => match[1])
     expect([...new Set(names)].sort()).toEqual(["result", "send", "start", "status"])
+  })
+
+  test("documents start prompt stdin", async () => {
+    const output = await generateHelp({ command: "cloud", format: "md", commands })
+    expect(output).toContain("kilo cloud start")
+    expect(output).toContain("--prompt-stdin")
   })
 })
 

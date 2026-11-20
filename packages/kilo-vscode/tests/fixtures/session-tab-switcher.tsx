@@ -14,6 +14,7 @@ Object.assign(globalThis, {
   HTMLTextAreaElement: window.HTMLTextAreaElement,
   SVGElement: window.SVGElement,
   MutationObserver: window.MutationObserver,
+  IntersectionObserver: window.IntersectionObserver,
   ResizeObserver: window.ResizeObserver,
   CustomEvent: window.CustomEvent,
   Event: window.Event,
@@ -22,11 +23,7 @@ Object.assign(globalThis, {
   KeyboardEvent: window.KeyboardEvent,
   MouseEvent: window.MouseEvent,
   PointerEvent: window.PointerEvent,
-  getComputedStyle: (node: Element) => {
-    const value = style(node)
-    Object.defineProperty(value, "animationName", { configurable: true, value: "none" })
-    return value
-  },
+  getComputedStyle: style,
   requestAnimationFrame: window.requestAnimationFrame.bind(window),
   cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
 })
@@ -103,6 +100,15 @@ async function closeFiltered() {
   await open()
 
   const input = query<HTMLInputElement>('[data-slot="list-search"] input', "Switcher search did not render")
+  input.value = "be"
+  input.dispatchEvent(new InputEvent("input", { bubbles: true, data: "be", inputType: "insertText" }))
+  await settle()
+
+  query<HTMLButtonElement>('[aria-label="Clear filter"]', "Clear button did not render").click()
+  await settle()
+  assert.equal(input.value, "", "Clearing did not reset the search input")
+  assert.equal(root.querySelectorAll('[data-slot="list-item"]').length, 3, "Clearing did not restore all tabs")
+  assert.equal(document.activeElement, input, "Clearing did not restore search focus")
   input.value = "be"
   input.dispatchEvent(new InputEvent("input", { bubbles: true, data: "be", inputType: "insertText" }))
   await settle()

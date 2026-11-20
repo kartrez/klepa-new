@@ -8,7 +8,7 @@ import ai.kilocode.client.session.model.ToolKind
 import ai.kilocode.client.session.ui.selection.SessionSelection
 import ai.kilocode.client.session.ui.style.SessionEditorStyle
 import ai.kilocode.client.session.ui.style.SessionUiStyle
-import ai.kilocode.client.session.views.base.SecondarySessionPartView
+import ai.kilocode.client.session.views.base.AbstractSessionPartView
 import ai.kilocode.client.ui.UiStyle
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.ui.JBUI
@@ -20,8 +20,8 @@ class ReadToolView(
     tool: Tool,
     openFile: SessionFileOpener = { _, _ -> },
     private val selection: SessionSelection? = null,
-    private val parts: ToolParts = toolParts(tool, openFile),
-    ) : SecondarySessionPartView(parts.header, parts.scroll(tool), expandable = false) {
+    private val parts: ToolParts = toolParts(tool, openFile, link = true),
+    ) : AbstractSessionPartView(parts.header, { parts.scroll(tool) }, expandable = false) {
 
     companion object {
         fun canRender(tool: Tool): Boolean = tool.kind == ToolKind.READ
@@ -33,9 +33,6 @@ class ReadToolView(
     private var style = SessionEditorStyle.current()
 
     init {
-        parts.text?.let { selection?.register(it, this) }
-        bindHeader(parts.glyph, parts.title, parts.sub, parts.state, parts.center, parts.controls, parts.slot)
-        parts.text?.text = preview(item)
         applyStyle(style)
         sync()
     }
@@ -72,11 +69,11 @@ class ReadToolView(
     @RequiresEdt
     internal fun bodyMaxRows() = SessionUiStyle.View.Tool.BODY_LINES
     @RequiresEdt
-    internal fun bodyFont() = parts.text?.font ?: style.transcriptFont
+    internal fun bodyFont() = style.transcriptFont
     @RequiresEdt
     internal fun bodyCreated() = parts.bodyCreated()
     @RequiresEdt
-    internal fun bodyWrap() = parts.text?.lineWrap ?: false
+    internal fun bodyWrap() = parts.text?.lineWrap == true
     @RequiresEdt
     internal fun bodyEditor() = parts.content?.editor
     @RequiresEdt
@@ -84,7 +81,7 @@ class ReadToolView(
     @RequiresEdt
     internal fun linkText() = parts.label
     @RequiresEdt
-    internal fun linkMarkup() = parts.link.text ?: ""
+    internal fun linkUnderline() = parts.link.underline
     @RequiresEdt
     internal fun linkForeground() = parts.link.foreground
     @RequiresEdt
@@ -121,8 +118,8 @@ class ReadToolView(
         changed = setText(parts.title, title(item)) || changed
         changed = syncSubtitle() || changed
         changed = setForeground(parts.title, titleColor(item)) || changed
-        changed = setForeground(parts.sub, UiStyle.Colors.fg()) || changed
-        changed = setForeground(parts.link, UiStyle.Colors.fg()) || changed
+        changed = setForeground(parts.sub, SessionUiStyle.Colors.foreground()) || changed
+        changed = setForeground(parts.link, SessionUiStyle.Colors.foreground()) || changed
         changed = setText(parts.state, stateText(item)) || changed
         changed = setForeground(parts.state, color(item)) || changed
         parts.text?.let { changed = setForeground(it, bodyColor()) || changed }
@@ -146,7 +143,7 @@ class ReadToolView(
         return true
     }
 
-    private fun bodyColor() = if (item.state == ToolExecState.ERROR) UiStyle.Colors.errorLabelForeground() else UiStyle.Colors.fg()
+    private fun bodyColor() = if (item.state == ToolExecState.ERROR) UiStyle.Colors.errorLabelForeground() else SessionUiStyle.Colors.foreground()
 
     private fun bodyMaxHeight(): Int {
         val text = parts.text ?: return 0

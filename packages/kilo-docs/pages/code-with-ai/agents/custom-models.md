@@ -35,7 +35,7 @@ Add custom models under the `provider.<provider_id>.models` key in your config f
 - **Provider API** — The protocol used by the provider. Use **OpenAI Responses** for OpenAI and xAI models. Use **Anthropic Messages** for Anthropic and MiniMax models. **OpenAI Compatible** is the default for other OpenAI Chat Completions-compatible endpoints.
 - **Base URL** — The provider's API endpoint (e.g., `https://api.myprovider.com/v1`). When a valid URL is entered, Kilo automatically fetches available models from the endpoint if it exposes an OpenAI-compatible models endpoint.
 - **API key** — Your provider's API key. Optional — leave empty if you manage authentication via headers.
-- **Models** — Add models manually by ID and display name, or select from the auto-fetched list that appears after entering a valid base URL.
+- **Models** — Add models manually by ID and display name, or select from the auto-fetched list that appears after entering a valid base URL. Click **Fetch models** to trigger the fetch on demand, for example after the automatic fetch failed or the endpoint requires extra setup.
 - **Headers** (optional) — Add custom HTTP headers as key-value pairs if your provider requires them.
 
 4. Click **Submit** to save. Your custom provider appears in the provider list and its models become available in the model picker.
@@ -387,7 +387,7 @@ You can also set options that apply to all models from a provider:
 |---|---|---|
 | `apiKey` | `string` | API key (supports `{env:VAR}` and `{file:...}` syntax in trusted config — see note below) |
 | `baseURL` | `string` | Override the provider's base API URL |
-| `timeout` | `number \| false` | Request timeout in milliseconds. Defaults to `300000` (5 minutes); set to `false` to disable |
+| `timeout` | `number \| false` | Request timeout in milliseconds, covering both the wait for response headers and the wait for the first byte of the response body. Defaults to `300000` (5 minutes); set to `false` to disable. Once data starts arriving the timeout no longer applies, so slow streaming responses are never cut short — use `chunkTimeout` for gaps inside a response |
 | `chunkTimeout` | `number` | Timeout in milliseconds between streamed response chunks. If no chunk arrives within this window, the request is aborted and retried. This catches silent provider dropouts where the TCP connection stays open but SSE streaming stops. Recommended: `15000`–`30000` (15–30 seconds) for providers with unreliable streaming. |
 
 {% callout type="warning" title="{env:} / {file:} only resolve in trusted config" %}

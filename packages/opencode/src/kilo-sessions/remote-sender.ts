@@ -1,7 +1,13 @@
 import { RemoteCommand } from "@/kilo-sessions/remote-command"
 import { RemoteExit } from "@/kilo-sessions/remote-exit"
 import { RemoteModelCatalog } from "@/kilo-sessions/remote-model-catalog"
+import { RemoteAgentCatalog } from "@/kilo-sessions/remote-agent-catalog"
+import type { Agent } from "@/agent/agent"
+import { RemoteSessionLog } from "@/kilo-sessions/remote-session-log"
 import { RemoteProtocol } from "@/kilo-sessions/remote-protocol"
+// kilocode_change - set_pr_link: parse the app-supplied PR URL into a per-session link.
+import { enabled as prEnabled, parsePrUrl, type PrLink } from "@/kilo-sessions/pr-link"
+import { consumeRenameAdoption, markRenameAdopted } from "@/kilo-sessions/rename-adoptions"
 import type { RemoteWS } from "@/kilo-sessions/remote-ws"
 import { GlobalBus } from "@/bus/global"
 import { RemoteAttachments } from "@/kilocode/remote-attachments"
@@ -13,7 +19,7 @@ import { Suggestion } from "@/kilocode/suggestion" // kilocode_change
 import { KiloSessionPromptQueue } from "@/kilocode/session/prompt-queue"
 import { Permission } from "@/permission"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
-import { SessionID } from "@/session/schema"
+import { MessageID, SessionID } from "@/session/schema"
 import { QuestionID } from "@/question/schema"
 import { Provider } from "@/provider/provider"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -21,6 +27,9 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import z from "zod"
 import { zodObject } from "@opencode-ai/core/effect-zod"
 import { Effect, Option, Schema } from "effect"
+import { readdir } from "node:fs/promises"
+import { isAbsolute, join, relative, sep } from "path"
+import { Filesystem } from "@/util/filesystem"
 
 type Provide = typeof import("@/kilocode/instance").provide
 
@@ -38,6 +47,9 @@ const PermissionData = z.object({
   requestID: z.string(),
   reply: z.enum(["once", "always", "reject"]),
   message: z.string().optional(),
+  // Set by a remote human client; threads through to permission.reply so the server
+  // accepts a human approval of a skill-shell batch (non-interactive ones are refused).
+  interactive: z.boolean().optional(),
 })
 
 const SuggestionData = z.object({
@@ -45,12 +57,53 @@ const SuggestionData = z.object({
   index: z.number().int().nonnegative(),
 })
 
-// kilocode_change start - create_session: strict v1 request, no other fields accepted
+const DropQueuedMessageData = z.object({
+  messageID: z.string().startsWith("msg"),
+})
+
+// kilocode_change start - set_pr_link: the app-controlled per-session PR link.
+// `{ prUrl }` is parsed into a PrLink; `{ cleared: true }` withdraws the link.
+const SetPrLinkData = z.union([z.object({ prUrl: z.string() }), z.object({ cleared: z.literal(true) })])
+// kilocode_change end
+
+// kilocode_change start - create_session: strict v1 request with optional inheritance fields
+const CreateSessionModel = z.object({
+  providerID: z.string().min(1),
+  modelID: z.string().min(1),
+  variant: z.string().min(1).optional(),
+})
 const CreateSessionRequest = z
   .object({
     protocolVersion: z.literal(1),
+    agent: z.string().min(1).optional(),
+    model: CreateSessionModel.optional(),
+    orgId: z.string().uuid().optional(),
+    directory: z.string().min(1).max(RemoteCommand.MAX_STRING_LENGTH).optional(),
+    // kilocode_change - cloneFromKiloSessionId: optional cloud-session import.
+    // The old wire form omits this field and performs a fresh sessionCreate;
+    // remove the fresh-create branch when every shipped CLI advertises sessionClone.
+    cloneFromKiloSessionId: z.string().min(1).optional(),
+    // kilocode_change - cloneUpToMessageId: inclusive fork cut for a clone;
+    // only valid with cloneFromKiloSessionId. Advertised as sessionCloneAtMessage.
+    cloneUpToMessageId: z.string().min(1).max(RemoteCommand.MAX_STRING_LENGTH).optional(),
   })
   .strict()
+  .refine((data) => data.cloneUpToMessageId === undefined || data.cloneFromKiloSessionId !== undefined)
+
+type CreateSessionInput = {
+  agent?: string
+  model?: {
+    id: ModelV2.ID
+    providerID: ProviderV2.ID
+    variant?: string
+  }
+  metadata?: { orgId: string }
+}
+
+const SessionRenamedData = z.object({
+  sessionId: z.string().min(1),
+  title: z.string().min(1),
+})
 // kilocode_change end
 
 const decodeSessionID = Schema.decodeUnknownOption(SessionID)
@@ -62,6 +115,44 @@ function errorName(error: unknown): string {
   return typeof error
 }
 // kilocode_change end
+
+// kilocode_change - k1: resolve a client-supplied directory path under the
+// launch directory. Reuses Filesystem.resolve (canonicalize) and
+// Filesystem.contains (lexical containment on canonical paths) so a symlink
+// that escapes the launch directory is rejected, not a bespoke check.
+function resolveUnderLaunch(launchDir: string, relative: string | undefined): string {
+  const launchReal = Filesystem.resolve(launchDir)
+  if (relative === undefined) return launchReal
+  if (isAbsolute(relative)) throw new Error("absolute directory paths are not allowed")
+  // Require the target to exist and be a directory before canonicalizing:
+  // Filesystem.resolve falls back to the lexical path on ENOENT, so a
+  // symlinked ancestor with a missing final component would pass the
+  // containment test below. Both callers select an existing folder.
+  const requested = join(launchDir, relative)
+  if (!Filesystem.stat(requested)?.isDirectory()) {
+    throw new Error("directory does not exist")
+  }
+  const requestedReal = Filesystem.resolve(requested)
+  if (!Filesystem.contains(launchReal, requestedReal)) {
+    throw new Error("directory path escapes the launch directory")
+  }
+  return requestedReal
+}
+
+// kilocode_change - create_session cloud-import error mapping. The import seam
+// rejects with a tagged error carrying the upstream `status` (or a
+// "CloudSessionImportUnauthorized" tag for missing credentials). Map those to
+// the exact wire literals; never surface the upstream message (it may embed
+// credentials) and never fall back to a fresh sessionCreate.
+function importErrorText(error: unknown): string {
+  const value = error as { status?: unknown; _tag?: unknown } | null | undefined
+  if (value?._tag === "CloudSessionImportUnauthorized") return "cloud session import unauthorized"
+  if (value?._tag === "CloudSessionImportCutNotFound") return "cloud session cut not found"
+  if (value?.status === 404) return "cloud session not found"
+  if (value?.status === 401) return "cloud session import unauthorized"
+  if (value?.status === 403) return "cloud session import access denied"
+  return "cloud session import failed"
+}
 
 // kilocode_change start — lazy init to avoid circular dependency
 // (Server → RemoteRoutes → RemoteSender → SessionPrompt at module load time)
@@ -90,10 +181,13 @@ function normalizeModel(model: string | RemoteModelCatalog.ModelRef | undefined)
 }
 
 function normalizePrompt(input: RemotePromptInput): SessionPrompt.PromptInput {
+  // messageID passes through unchanged: new clients send it, old ones omit it.
+  // Leave the field unset when absent so SessionPrompt assigns the CLI-side ID
+  // via `input.messageID ?? MessageID.ascending()`. Remove this implicit
+  // fallback once every client sends messageID.
   return {
     ...input,
     model: normalizeModel(input.model),
-    ephemeralTools: { interactive_terminal: false },
   }
 }
 
@@ -123,15 +217,15 @@ export namespace RemoteSender {
       readonly get: (sessionID: SessionID) => Promise<Session.Info>
       readonly children: (sessionID: SessionID) => Promise<Session.Info[]>
       // kilocode_change start - injectable create hook for create_session.
-      // create_session only ever calls `create({})` for a root session, so the
-      // test hook is typed as the loose `() => Promise<Session.Info>` shape.
-      // Production falls back to Session.Service.create with `{}`.
-      readonly create?: (input?: Record<string, never>) => Promise<Session.Info>
+      // Production forwards {agent, model, metadata} to Session.Service.create.
+      readonly create?: (input?: CreateSessionInput) => Promise<Session.Info>
       // kilocode_change - injectable remove hook used to roll back an orphan
       // root session when the spawn fails after creation. The default
       // delegates to Session.Service.remove and only swallows its own errors
       // so the original spawn failure is what reaches the caller.
       readonly remove?: (sessionID: SessionID) => Promise<void>
+      // kilocode_change - injectable setTitle for system session.renamed handling
+      readonly setTitle?: (input: { sessionID: SessionID; title: string }) => Promise<void>
       // kilocode_change end
     }
     // kilocode_change - K1 W1: in-process attach/detach/ownership/cancel
@@ -141,16 +235,38 @@ export namespace RemoteSender {
     // these paths simply omit them and the defaults supply no-op-safe
     // shims so the production call sites stay the only places that
     // actually touch the AttachedState).
-    attachSession?: (sessionID: SessionID) => Promise<void>
+    //
+    // `attachSession`'s `requireShare` option belongs to the create_session
+    // command: it makes the attach fail unless the relay accepted the
+    // session's ingest bootstrap, so the command rolls the new session back
+    // instead of hosting one the relay refuses (KiloSessions.ensureSharedSession).
+    attachSession?: (sessionID: SessionID, opts?: { requireShare?: boolean }) => Promise<void>
     detachSession?: (sessionID: SessionID) => Promise<void>
     hasSession?: (sessionID: SessionID) => boolean
     ownedCount?: () => number
     cancelPrompt?: (sessionID: SessionID) => Promise<void>
+    // kilocode_change - injectable cloud-session import seam for create_session
+    // clone requests. Takes the cloud session id and returns the imported
+    // local Session.Info plus a `finalize` closure that restores workspace
+    // files and writes session_diff storage keys; the caller must run
+    // `finalize` only after a successful attach. Production wires this to the
+    // in-process import helper (dynamic import + AppRuntime.runPromise); a
+    // missing seam is a wiring bug, never a fallback to sessionCreate.
+    // An optional `upToMessageId` forks at that message (inclusive cut).
+    importFromCloud?: (
+      cloneId: string,
+      opts?: { upToMessageId?: string },
+    ) => Promise<{ session: Session.Info; finalize: () => Promise<void> }>
     catalog?: {
       readonly get: (sessionID: SessionID) => Promise<Session.Info>
       readonly messages: (sessionID: SessionID) => Promise<MessageV2.WithParts[]>
       readonly providers: () => Promise<Record<ProviderV2.ID, Provider.Info>>
       readonly default: () => Promise<RemoteModelCatalog.ModelRef | undefined>
+    }
+    // kilocode_change - injectable agent list for list_agents; runs inside the
+    // provided directory, so it sees that directory's project agents.
+    agents?: {
+      readonly list: () => Promise<Agent.Info[]>
     }
     commands?: RemoteCommand.Interface
     remoteExit?: {
@@ -162,6 +278,10 @@ export namespace RemoteSender {
     // returns the input so the existing remote-sender suite continues to
     // exercise schema/ordering paths without touching the network.
     attachments?: (sessionID: SessionID) => RemoteAttachments.Result | undefined
+    // kilocode_change - set_pr_link: per-session PR link seam. `value` is the
+    // parsed link, or undefined to withdraw the link the session owns. The
+    // default records/clears the command session's own link; tests inject this.
+    setPrLink?: (value: PrLink | undefined, sessionId: SessionID) => Promise<void>
   }
 
   export type Sender = {
@@ -233,6 +353,14 @@ export namespace RemoteSender {
         return AppRuntime.runPromise(Provider.Service.use((svc) => svc.defaultModel()))
       },
     }
+    // kilocode_change start - agent list seam for list_agents
+    const agents = options.agents ?? {
+      list: async () => {
+        const [{ AppRuntime }, { Agent }] = await Promise.all([import("@/effect/app-runtime"), import("@/agent/agent")])
+        return AppRuntime.runPromise(Agent.Service.use((svc) => svc.list()))
+      },
+    }
+    // kilocode_change end
     const session = options.session ?? {
       get: async (sessionID: SessionID) => {
         const { AppRuntime } = await import("@/effect/app-runtime")
@@ -263,17 +391,21 @@ export namespace RemoteSender {
     // as a wiring bug (a missing seam is never a runtime fallback).
     const sessionCreate =
       session.create ??
-      (async (input?: Record<string, never>) => {
+      (async (input?: CreateSessionInput) => {
         const { AppRuntime } = await import("@/effect/app-runtime")
-        return AppRuntime.runPromise(
-          Session.Service.use((svc) => svc.create(input as Parameters<typeof svc.create>[0])),
-        )
+        return AppRuntime.runPromise(Session.Service.use((svc) => svc.create(input)))
+      })
+    const sessionSetTitle =
+      session.setTitle ??
+      (async (input: { sessionID: SessionID; title: string }) => {
+        const { AppRuntime } = await import("@/effect/app-runtime")
+        await AppRuntime.runPromise(Session.Service.use((svc) => svc.setTitle(input)))
       })
     const attachSession =
       options.attachSession ??
-      (async (id: SessionID) => {
+      (async (id: SessionID, opts?: { requireShare?: boolean }) => {
         const { KiloSessions } = await import("@/kilo-sessions/kilo-sessions")
-        await KiloSessions.attachRemoteSession(id)
+        await KiloSessions.attachRemoteSession(id, opts)
       })
     const detachSession =
       options.detachSession ??
@@ -293,6 +425,33 @@ export namespace RemoteSender {
     // kilocode_change start - injectable slash command discovery + execution
     const commands = options.commands ?? RemoteCommand.live()
     const remoteExit = options.remoteExit ?? RemoteExit
+    // kilocode_change end
+    // kilocode_change start - set_pr_link default: record the app-supplied link
+    // against the command's own session, never the worktree, so it can never fan
+    // out to another session in the same checkout. `recordSessionLink` refuses a
+    // link whose host/owner/repo is not the session worktree's remote (a fork or
+    // another repo never sticks); `clearSessionLink` withdraws only that session.
+    const setPrLink =
+      options.setPrLink ??
+      (async (value: PrLink | undefined, sessionId: SessionID) => {
+        // Resolve the session's own checkout, not the launch directory, so a
+        // session the CLI hosts in another directory is recorded against its
+        // own repository.
+        const info = await session.get(sessionId).catch(() => undefined)
+        const run = options.provide ?? provide
+        await run({
+          directory: info?.directory ?? options.directory,
+          fn: async () => {
+            const { clearSessionLink, recordSessionLink } = await import("@/kilo-sessions/pr-link")
+            if (!value) {
+              await clearSessionLink(sessionId)
+              return
+            }
+            const { Instance } = await import("@/kilocode/instance")
+            await recordSessionLink(sessionId, { link: value, evidence: "user" }, Instance.worktree)
+          },
+        })
+      })
     // kilocode_change end
 
     const sub =
@@ -314,9 +473,7 @@ export namespace RemoteSender {
     // bus listener count from inflating for senders that never handle
     // attachments (the count would otherwise show up in unrelated tests
     // that assert it stays at 0).
-    const attachments =
-      options.attachments ??
-      ((sessionID: SessionID) => RemoteAttachments.create({ sessionID }))
+    const attachments = options.attachments ?? ((sessionID: SessionID) => RemoteAttachments.create({ sessionID }))
     const attachmentCache = new Map<SessionID, RemoteAttachments.Result>()
     const pending = new Map<SessionID, number>()
     const retired = new Map<SessionID, RemoteAttachments.Result>()
@@ -614,6 +771,80 @@ export namespace RemoteSender {
         })()
         return
       }
+      // kilocode_change - k1: connection-scoped directory listing for the
+      // instance-picker folder tree. Lists exactly one level, directories
+      // only, with symlink escapes skipped.
+      if (msg.command === "list_directories") {
+        const parsed = RemoteCommand.ListDirectoriesRequest.safeParse(msg.data)
+        if (!parsed.success) {
+          options.conn.send({
+            type: "response",
+            id: msg.id,
+            error: "invalid list_directories request",
+          })
+          return
+        }
+        const launchReal = Filesystem.resolve(options.directory)
+        let listed: string
+        try {
+          listed = resolveUnderLaunch(options.directory, parsed.data.path)
+        } catch {
+          options.conn.send({
+            type: "response",
+            id: msg.id,
+            error: "invalid list_directories path",
+          })
+          return
+        }
+        void (async () => {
+          try {
+            const entries = await readdir(listed, { withFileTypes: true })
+            const directories: RemoteCommand.ListDirectoriesEntry[] = []
+            for (const entry of entries) {
+              if (directories.length >= RemoteCommand.MAX_DIRECTORIES) break
+              let childReal: string
+              try {
+                childReal = Filesystem.resolve(join(listed, entry.name))
+              } catch {
+                continue // skip a child whose canonical path cannot be resolved (ELOOP, EACCES)
+              }
+              // A symlink whose canonical path equals the launch directory
+              // resolves to launchReal, so its relative path is "" and would
+              // violate ListDirectoriesEntry.path min(1). Never emit it.
+              const childPath = relative(launchReal, childReal).split(sep).join("/")
+              if (!childPath) continue
+              // Windows junctions report isDirectory() without isSymbolicLink(), so apply
+              // the containment check to every entry, not only symlinks.
+              if (!Filesystem.contains(launchReal, childReal)) continue
+              if (entry.isDirectory()) {
+                directories.push({ name: entry.name, path: childPath })
+                continue
+              }
+              if (entry.isSymbolicLink()) {
+                let realIsDir = false
+                try {
+                  realIsDir = Filesystem.stat(childReal)?.isDirectory() === true
+                } catch {
+                  continue
+                }
+                if (realIsDir) {
+                  directories.push({ name: entry.name, path: childPath })
+                }
+              }
+            }
+            const listedRelative = relative(launchReal, listed).split(sep).join("/")
+            options.conn.send({
+              type: "response",
+              id: msg.id,
+              result: { protocolVersion: 1, path: listedRelative, directories },
+            })
+          } catch (error) {
+            options.log.error("list directories failed", { id: msg.id, error: errorName(error) })
+            options.conn.send({ type: "response", id: msg.id, error: "failed to list directories" })
+          }
+        })()
+        return
+      }
       if (msg.command === "send_command") {
         const parsed = RemoteCommand.SendRequest.safeParse(msg.data)
         const session = msg.sessionId ? decodeSessionID(msg.sessionId) : Option.none<SessionID>()
@@ -736,6 +967,9 @@ export namespace RemoteSender {
             await cancelPrompt(target)
             // 2. Detach + await the negative-containment heartbeat.
             await detachSession(target)
+            // The session this run hosted has ended; log its end before the ACK
+            // so the trace exists even if a later step fails.
+            RemoteSessionLog.end(options.log, { sessionID: target, reason: "detached" })
             // 3. Snapshot remaining sessions AFTER detach. Headless hosts
             //    (`kilo remote`) never register a RemoteExit callback, so
             //    `exit` is undefined there and the host stays alive.
@@ -764,18 +998,16 @@ export namespace RemoteSender {
         return
       }
       if (msg.command === "create_session") {
-        // kilocode_change - K1 W1: in-process create_session. The wire
-        // shape is unchanged (`{protocolVersion: 1}`), but the handler now
-        // (a) accepts an absent `sessionId` (the instance-picker path is
-        // connectionId-targeted — no source session needed), (b) resolves
-        // the target directory to that existing session's directory when
-        // a `sessionId` is present (legacy mobile /new-inside-a-session
-        // path) or to `options.directory` (the instance's own launch
-        // directory) otherwise, and (c) attaches the new session in the
-        // same CLI process (concurrent sessions share the process with
-        // per-directory InstanceRef isolation) instead of spawning a child.
-        // Attach failures roll back the pre-created session via
-        // `sessionRemove`.
+        // kilocode_change - K1 W1: in-process create_session. Optional wire
+        // fields (agent/model/orgId) ride protocolVersion 1; orgId lands in
+        // session metadata so the first kilo_meta carries the claim. Handler
+        // (a) accepts an absent `sessionId` (instance-picker path), (b)
+        // resolves the target directory from that session or options.directory,
+        // (c) attaches in-process; attach failures roll back via sessionRemove.
+        // kilocode_change - clone: an optional cloneFromKiloSessionId imports a
+        // cloud session in-process (importFromCloud) instead of a fresh
+        // sessionCreate; a missing importFromCloud seam is a wiring bug, never
+        // a fallback to sessionCreate.
         const parsed = CreateSessionRequest.safeParse(msg.data)
         if (!parsed.success) {
           options.conn.send({
@@ -794,34 +1026,141 @@ export namespace RemoteSender {
           })
           return
         }
+        const cloneId = parsed.data.cloneFromKiloSessionId
+        const cut = parsed.data.cloneUpToMessageId
+        const importFromCloud = options.importFromCloud
+        if (cloneId && !importFromCloud) {
+          options.conn.send({
+            type: "response",
+            id: msg.id,
+            error: "invalid create_session command",
+          })
+          return
+        }
+        const createInput: CreateSessionInput = {
+          ...(parsed.data.agent ? { agent: parsed.data.agent } : {}),
+          ...(parsed.data.model
+            ? {
+                model: {
+                  id: ModelV2.ID.make(parsed.data.model.modelID),
+                  providerID: ProviderV2.ID.make(parsed.data.model.providerID),
+                  ...(parsed.data.model.variant ? { variant: parsed.data.model.variant } : {}),
+                },
+              }
+            : {}),
+          ...(parsed.data.orgId ? { metadata: { orgId: parsed.data.orgId } } : {}),
+        }
+        // kilocode_change - k1: a present `directory` starts the session in a
+        // contained relative path under the launch directory. Resolve it before
+        // the create try/catch so a bad path is a request error ("invalid
+        // create_session directory"), not a create failure. Old clients omit
+        // `directory`; keep the sessionId/options.directory fallback below until
+        // every supported client sends it.
+        const targetOverride = (() => {
+          if (parsed.data.directory === undefined) return undefined
+          try {
+            return resolveUnderLaunch(options.directory, parsed.data.directory)
+          } catch {
+            return undefined
+          }
+        })()
+        if (parsed.data.directory !== undefined && targetOverride === undefined) {
+          options.conn.send({
+            type: "response",
+            id: msg.id,
+            error: "invalid create_session directory",
+          })
+          return
+        }
         const run = options.provide ?? provide
         void (async () => {
           try {
-            // Resolve the target directory: a present `sessionId` keeps the
-            // legacy mobile /new-inside-a-session behavior (target = that
-            // session's directory); an absent `sessionId` targets the
-            // instance's own launch directory (the new instance-picker path).
-            const targetDirectory = await current.pipe(
-              Option.map((sid) => session.get(sid)),
-              Option.map((p) => p.then((info) => info.directory)),
-              Option.getOrElse(() => Promise.resolve(options.directory)),
-            )
+            // Resolve the target directory: a present `directory` field wins
+            // (contained relative path under the launch directory); otherwise a
+            // present `sessionId` keeps the legacy mobile
+            // /new-inside-a-session behavior (target = that session's
+            // directory); an absent `sessionId` targets the instance's own
+            // launch directory (the new instance-picker path).
+            const targetDirectory =
+              targetOverride ??
+              (await current.pipe(
+                Option.map((sid) => session.get(sid)),
+                Option.map((p) => p.then((info) => info.directory)),
+                Option.getOrElse(() => Promise.resolve(options.directory)),
+              ))
+            if (cloneId) {
+              // Clone path: import in-process, then attach. Import failures
+              // map to the exact literals and never fall back to a fresh
+              // sessionCreate; attach failures roll back the imported session.
+              const outcome = await run({
+                directory: targetDirectory,
+                fn: async (): Promise<{ id: string } | { error: string }> => {
+                  let imported: { session: Session.Info; finalize: () => Promise<void> }
+                  try {
+                    imported = await importFromCloud!(cloneId, cut === undefined ? undefined : { upToMessageId: cut })
+                  } catch (importError) {
+                    return { error: importErrorText(importError) }
+                  }
+                  try {
+                    await attachSession(imported.session.id)
+                  } catch (attachError) {
+                    // Roll back the imported root session so the DB does not
+                    // keep an orphan the relay never learned about. Swallow
+                    // the cleanup error; re-throw the original attach error.
+                    try {
+                      await sessionRemove(imported.session.id)
+                    } catch (cleanupError) {
+                      options.log.error("create session cleanup failed", {
+                        id: msg.id,
+                        error: errorName(cleanupError),
+                      })
+                    }
+                    throw attachError
+                  }
+                  // Restore workspace files and write storage keys only after
+                  // the attach succeeded. finalize never rejects.
+                  await imported.finalize()
+                  RemoteSessionLog.start(options.log, {
+                    sessionID: imported.session.id,
+                    model: RemoteSessionLog.modelLabel(imported.session.model),
+                    directory: imported.session.directory ?? targetDirectory,
+                  })
+                  return { id: imported.session.id }
+                },
+              })
+              if ("error" in outcome) {
+                options.conn.send({ type: "response", id: msg.id, error: outcome.error })
+                return
+              }
+              options.conn.send({
+                type: "response",
+                id: msg.id,
+                result: { protocolVersion: 1, sessionID: outcome.id },
+              })
+              return
+            }
             const result = await run({
               directory: targetDirectory,
               fn: async () => {
-                const created = await sessionCreate({})
+                const created = await sessionCreate(createInput)
                 // attachSession is the duplicate-safe seam: it mutates the
                 // attached set exactly once and fires conn.heartbeat() only
                 // when the set actually changes, so the relay learns about
                 // the new session before we respond.
+                //
+                // requireShare makes the attach wait for the relay's answer to
+                // the session's ingest bootstrap (POST /api/session). A relay
+                // that refuses the session leaves nothing to share, so the
+                // session is rolled back below and never logged as started.
                 try {
-                  await attachSession(created.id)
+                  await attachSession(created.id, { requireShare: true })
                 } catch (attachError) {
                   // Roll back the newly-created root session so the DB does
-                  // not keep an orphan the relay never learned about.
+                  // not keep an orphan the relay never accepted.
                   // Swallow the cleanup error here — the original attach
                   // failure is what the caller must see, so we re-throw it
                   // below.
+                  options.log.warn("create session rolled back", { id: msg.id, sessionID: created.id })
                   try {
                     await sessionRemove(created.id)
                   } catch (cleanupError) {
@@ -832,6 +1171,13 @@ export namespace RemoteSender {
                   }
                   throw attachError
                 }
+                // The session is attached and this run hosts it; log its start
+                // with the model and directory already in hand.
+                RemoteSessionLog.start(options.log, {
+                  sessionID: created.id,
+                  model: RemoteSessionLog.modelLabel(created.model ?? createInput.model),
+                  directory: created.directory ?? targetDirectory,
+                })
                 return created
               },
             })
@@ -848,27 +1194,27 @@ export namespace RemoteSender {
         return
       }
       // kilocode_change end
+      // kilocode_change start - sessionless list_models for the pre-session instance picker
       if (msg.command === "list_models") {
         const parsed = RemoteModelCatalog.Request.safeParse(msg.data)
-        const session = msg.sessionId ? decodeSessionID(msg.sessionId) : Option.none<SessionID>()
-        if (!parsed.success || Option.isNone(session)) {
-          options.conn.send({
-            type: "response",
-            id: msg.id,
-            error: "invalid list_models command",
-          })
+        // Accept an absent sessionId (the mobile instance-picker path asks for the
+        // instance's catalog before a session exists). A present but undecodable
+        // sessionId is still invalid.
+        const target = msg.sessionId ? decodeSessionID(msg.sessionId) : Option.none<SessionID>()
+        if (!parsed.success || (msg.sessionId && Option.isNone(target))) {
+          options.conn.send({ type: "response", id: msg.id, error: "invalid list_models command" })
           return
         }
         const run = options.provide ?? provide
         void (async () => {
           try {
-            const info = await catalog.get(session.value)
+            const info = Option.isSome(target) ? await catalog.get(target.value) : undefined
             const result = await run({
-              directory: info.directory,
+              directory: info?.directory ?? options.directory,
               fn: async () => {
                 const [providers, messages, fallback] = await Promise.all([
                   catalog.providers(),
-                  catalog.messages(info.id),
+                  info ? catalog.messages(info.id) : Promise.resolve([]),
                   catalog.default().catch((err) => {
                     options.log.warn("default model lookup failed", { error: String(err) })
                     return undefined
@@ -876,7 +1222,7 @@ export namespace RemoteSender {
                 ])
                 return RemoteModelCatalog.build({
                   providers,
-                  session: info,
+                  session: info ?? {},
                   messages,
                   defaultModel: fallback,
                 })
@@ -890,6 +1236,47 @@ export namespace RemoteSender {
         })()
         return
       }
+      // kilocode_change end
+      // kilocode_change start - list_agents: the agents a session can run as,
+      // resolved in the directory the client will start or continue a session
+      // in. A present `directory` wins (contained relative path under the
+      // launch directory, as in create_session); otherwise a present sessionId
+      // uses that session's directory, and a sessionless request uses the
+      // launch directory.
+      if (msg.command === "list_agents") {
+        const parsed = RemoteAgentCatalog.Request.safeParse(msg.data)
+        const target = msg.sessionId ? decodeSessionID(msg.sessionId) : Option.none<SessionID>()
+        if (!parsed.success || (msg.sessionId && Option.isNone(target))) {
+          options.conn.send({ type: "response", id: msg.id, error: "invalid list_agents command" })
+          return
+        }
+        const dir = (() => {
+          if (parsed.data.directory === undefined) return undefined
+          try {
+            return resolveUnderLaunch(options.directory, parsed.data.directory)
+          } catch {
+            return null
+          }
+        })()
+        if (dir === null) {
+          options.conn.send({ type: "response", id: msg.id, error: "invalid list_agents directory" })
+          return
+        }
+        const run = options.provide ?? provide
+        void (async () => {
+          try {
+            const directory =
+              dir ?? (Option.isSome(target) ? (await catalog.get(target.value)).directory : options.directory)
+            const result = await run({ directory, fn: async () => RemoteAgentCatalog.build(await agents.list()) })
+            options.conn.send({ type: "response", id: msg.id, result })
+          } catch (error) {
+            options.log.error("list agents failed", { id: msg.id, error: errorName(error) })
+            options.conn.send({ type: "response", id: msg.id, error: "failed to list agents" })
+          }
+        })()
+        return
+      }
+      // kilocode_change end
       if (msg.command === "send_message") {
         const parsed = getRemotePromptInput().safeParse(msg.data)
         if (!parsed.success) {
@@ -910,7 +1297,7 @@ export namespace RemoteSender {
           })
           return
         }
-        const promptInput = { ...input.data, ephemeralTools: normalized.ephemeralTools } as SessionPrompt.PromptInput
+        const promptInput = input.data as SessionPrompt.PromptInput
         const remote = promptInput.parts.some((part) => part.type === "file" && RemoteAttachments.isFetchable(part.url))
         if (remote) {
           begin(promptInput.sessionID)
@@ -948,6 +1335,30 @@ export namespace RemoteSender {
         dispatchQuick(msg, directoryFor(session.value), () => cancel(session.value))
         return
       }
+      // kilocode_change start - drop a queued (not yet running) remote message
+      if (msg.command === "drop_queued_message") {
+        const parsed = DropQueuedMessageData.safeParse(msg.data)
+        const session = msg.sessionId ? decodeSessionID(msg.sessionId) : Option.none<SessionID>()
+        if (!parsed.success || Option.isNone(session)) {
+          options.conn.send({
+            type: "response",
+            id: msg.id,
+            error: "invalid drop_queued_message command",
+          })
+          return
+        }
+        const messageID = MessageID.make(parsed.data.messageID)
+        // drop() publishes queue.changed itself. A false result means the ID
+        // is unknown or the actively running prompt, so leave the active run
+        // unchanged and never cancel the prompt.
+        dispatchQuick(msg, directoryFor(session.value), async () => {
+          if (!Effect.runSync(KiloSessionPromptQueue.drop(session.value, messageID))) {
+            throw new Error("message not queued")
+          }
+        })
+        return
+      }
+      // kilocode_change end
       if (msg.command === "question_reply") {
         const parsed = QuestionData.safeParse(msg.data)
         if (!parsed.success) {
@@ -1027,6 +1438,44 @@ export namespace RemoteSender {
         })
         return
       }
+      // kilocode_change start - set_pr_link: the app (or the cloud) knows the PR.
+      // A link is per session, so the command must name the session that owns it:
+      // without one there is no owner, and we fail closed (write nothing) rather
+      // than pin the link to a worktree every session would inherit. A parsed URL
+      // is still checked against the session worktree's own repository.
+      if (msg.command === "set_pr_link") {
+        if (!prEnabled()) {
+          options.conn.send({ type: "response", id: msg.id, error: "set_pr_link is unsupported for this client" })
+          return
+        }
+        const parsed = SetPrLinkData.safeParse(msg.data)
+        const current = msg.sessionId ? decodeSessionID(msg.sessionId) : Option.none<SessionID>()
+        if (!parsed.success || Option.isNone(current)) {
+          options.conn.send({ type: "response", id: msg.id, error: "invalid set_pr_link command" })
+          return
+        }
+        const value = "cleared" in parsed.data ? undefined : parsePrUrl(parsed.data.prUrl)
+        if (!("cleared" in parsed.data) && !value) {
+          options.conn.send({ type: "response", id: msg.id, error: "invalid set_pr_link url" })
+          return
+        }
+        void (async () => {
+          try {
+            await setPrLink(value, current.value)
+            options.conn.send({ type: "response", id: msg.id, result: {} })
+            // Best-effort: let the cloud see the link immediately. Never await
+            // the heartbeat before responding (mirror setInstanceAdvertisement).
+            void options.conn
+              .heartbeat()
+              .catch((err) => options.log.warn("set_pr_link heartbeat failed", { id: msg.id, error: String(err) }))
+          } catch (error) {
+            options.log.error("set pr link failed", { id: msg.id, error: errorName(error) })
+            options.conn.send({ type: "response", id: msg.id, error: "failed to set pr link" })
+          }
+        })()
+        return
+      }
+      // kilocode_change end
       options.conn.send({
         type: "response",
         id: msg.id,
@@ -1068,6 +1517,49 @@ export namespace RemoteSender {
         return
       }
       if (msg.type === "system") {
+        if (msg.event === "session.renamed") {
+          const parsed = SessionRenamedData.safeParse(msg.data)
+          if (!parsed.success) {
+            options.log.warn("malformed session.renamed", { data: msg.data })
+            return
+          }
+          const sid = decodeSessionID(parsed.data.sessionId)
+          if (Option.isNone(sid)) {
+            options.log.warn("malformed session.renamed", { data: msg.data })
+            return
+          }
+          const run = options.provide ?? provide
+          void (async () => {
+            const title = parsed.data.title
+            try {
+              const info = await session.get(sid.value)
+              await run({
+                directory: info.directory,
+                fn: async () => {
+                  // Mark before setTitle: Session.Event.Updated publishes inside
+                  // setTitle and the kilo-sessions consumer is deferred, so a
+                  // post-write mark races the title broadcast. Clear on failure
+                  // (same consume-on-failure pattern ensureTitle uses for auto-titles)
+                  // so a later local write to this title is not skipped as an adoption.
+                  markRenameAdopted(sid.value, title)
+                  try {
+                    await sessionSetTitle({ sessionID: sid.value, title })
+                  } catch (error) {
+                    consumeRenameAdoption(sid.value, title)
+                    throw error
+                  }
+                },
+              })
+            } catch (error) {
+              // get() failure never marked; setTitle failure cleared above.
+              options.log.warn("session.renamed apply failed", {
+                sessionId: parsed.data.sessionId,
+                error: errorName(error),
+              })
+            }
+          })()
+          return
+        }
         options.log.info("system event", { event: msg.event })
         return
       }

@@ -39,6 +39,14 @@ kilo --help
 
 After installation, run `kilo` and use the `/connect` command to add your first provider credentials. This is the interactive way to configure API keys for model providers.
 
+## Opening Links
+
+Links in agent responses use terminal hyperlink metadata when the terminal supports it. Kilo also handles links inside the TUI, so mouse capture does not make supported HTTP(S) links inactive. Move the pointer over a link to see the hover underline, then click it to open the default browser.
+
+Ghostty sends native link clicks through the TUI when mouse capture is enabled. Use `Ctrl+Shift+click` on Linux or `Cmd+Shift+click` on macOS for terminal-native activation. The application click handler does not depend on those modifiers.
+
+If a link cannot open, select and copy its visible URL. Links are opened on the machine running Kilo, so use the copy fallback when Kilo runs over SSH and the browser is on your local machine. `KILO_DISABLE_MOUSE=1` can help diagnose terminal-native link behavior, but it also disables TUI mouse controls and is not required for normal link activation.
+
 ## Update
 
 Upgrade the Kilo CLI:
@@ -64,6 +72,10 @@ Or use npm:
 {% partial file="cli-commands-table.md" /%}
 
 For detailed help on every command and subcommand, see the [CLI Command Reference](/docs/code-with-ai/platforms/cli-reference).
+
+{% callout type="warning" title="Kilo Console is deprecated" %}
+The `kilo console` command and its browser interface are deprecated and will be removed in a future release. Use the CLI TUI, VS Code extension, or JetBrains plugin to run sessions. Use the CLI slash commands, other extensions, or edit Kilo configuration files directly to manage settings.
+{% /callout %}
 
 ### Global Options
 
@@ -93,6 +105,10 @@ For detailed help on every command and subcommand, see the [CLI Command Referenc
 | `/copy` | - | Copy latest agent response |
 | `/copy-session` | - | Copy session transcript |
 | `/export` | - | Export session transcript |
+| `/resume-claude [uuid]` | - | Import a Claude Code session transcript |
+| `/resume-codex [uuid]` | - | Import an OpenAI Codex session transcript |
+| `/move` | - | Move the current session to another project directory |
+| `/diff` | - | Open the diff viewer |
 | `/timestamps` | `/toggle-timestamps` | Show/hide timestamps |
 | `/thinking` | `/toggle-thinking` | Show/hide thinking blocks |
 
@@ -115,11 +131,17 @@ For detailed help on every command and subcommand, see the [CLI Command Referenc
 | Command | Aliases | Description |
 |---|---|---|
 | `/status` | - | View status |
+| `/about` | - | Show version, runtime, configuration paths, and provider details; press `c` to copy diagnostics |
 | `/themes` | - | Switch theme |
 | `/help` | - | Show help |
-| `/reload` | - | Reload config, skills, agents, and commands from disk |
+| `/reload` | - | Reload every instance of the project from disk (config, skills, agents, and commands) |
 | `/editor` | - | Open external editor |
+| `/auto-approve` | `/autoapprove`, `/approve-all`, `/approveall` | Toggle auto-approve mode for all permission prompts (saved to global config) |
+| `/caffeinate` | `/caffenate` | Toggle Keep Awake: prevent system sleep while Kilo sessions run |
+| `/privacy` | - | Toggle privacy mode (blurs PII in the TUI) |
 | `/exit` | `/quit`, `/q` | Exit the app |
+
+`/reload` reloads every instance of the project, including the main checkout and sibling worktrees. Kilo refuses the reload while any session in the project is running; wait for it to finish or abort it first.
 
 #### Kilo Gateway Commands (when connected)
 
@@ -135,6 +157,17 @@ For detailed help on every command and subcommand, see the [CLI Command Referenc
 |---|---|
 | `/init` | Create/update AGENTS.md file for the project |
 | `/review` | Review code changes |
+| `/goal [objective \| pause \| resume \| clear]` | Start, pause, resume, or clear a [session goal](/docs/code-with-ai/agents/goals) |
+
+### Importing Claude Code and Codex Sessions
+
+Continue work started in Claude Code or the OpenAI Codex CLI without copying transcripts by hand:
+
+1. Start a new session with `/new` — the import commands only run in an empty session.
+2. Run `/resume-claude` or `/resume-codex`.
+3. Pick one of the 10 most recent sessions for the current directory, or pass a session UUID directly, for example `/resume-claude <uuid>`.
+
+Kilo discovers Claude Code transcripts under `~/.claude/projects/` and Codex CLI rollouts under `~/.codex/sessions/`. The imported history keeps its original order and ends with an import notice. Content that Kilo cannot represent, such as some tool outputs, is skipped and counted in that notice.
 
 ## Local Code Reviews
 
@@ -161,12 +194,14 @@ Configuration is managed through:
 
 ## CLI Notifications and Sounds
 
-CLI attention alerts are disabled by default. Enable and configure them in either of these ways:
+CLI attention alerts are disabled by default. Enable and configure them by editing the TUI configuration:
 
-- Run `kilo console`, open your project, then go to **Settings > CLI > Notifications**.
-- Edit the TUI configuration directly. Use `~/.config/kilo/tui.jsonc` (or `tui.json`) for global settings, or `.kilo/tui.json` (or `tui.jsonc`) for project settings.
+- Edit `~/.config/kilo/tui.jsonc` (or `tui.json`) for global settings.
+- Edit `.kilo/tui.json` (or `tui.jsonc`) for project settings.
 
-The Console exposes the attention, desktop notification, sound, and volume controls. The equivalent TUI configuration is:
+For VS Code sounds and notifications, see [Notifications](/docs/getting-started/settings/notifications).
+
+Use the following configuration for attention, desktop notification, sound, and volume controls:
 
 ```json
 {
@@ -208,11 +243,24 @@ Supported sound names are `default`, `question`, `permission`, `error`, `done`, 
 
 The `attention.sound_pack` setting selects a sound pack registered by a TUI plugin. Setting an arbitrary pack name does not install or load a pack. Per-event file overrides remain the simplest way to customize sounds without a plugin.
 
-There is no notification slash command or command-palette toggle. Use Kilo Console or `tui.json` / `tui.jsonc` so all attention behavior is controlled by the same configuration.
+There is no slash command or command-palette toggle for notifications or sounds. Use `tui.json` or `tui.jsonc` so all attention behavior is controlled by the same configuration. Keep Awake is separate and has its own `/caffeinate` command; see [Keep Awake](/docs/getting-started/settings/keep-awake).
 
 ## Slash Commands
 
 The CLI's interactive mode supports slash commands for common operations. The main commands are documented above in the [Interactive Slash Commands](#interactive-slash-commands) section.
+
+Use `/diff` to review working-tree changes. From the diff viewer, switch the source to the current branch compared with the main branch, changes from the last assistant turn, or the last commit (`HEAD` vs `HEAD~1`). Use `/move` to move the current session to another project directory.
+
+The `diff_open` and `session_move` TUI keybindings run the same actions and are unbound by default. Set them under `keybinds` in `tui.jsonc`:
+
+```jsonc
+{
+  "keybinds": {
+    "diff_open": "<leader>d",
+    "session_move": "<leader>o",
+  },
+}
+```
 
 ## Permissions
 
@@ -369,6 +417,7 @@ Common configuration options include:
 - **`formatter`** - Code formatter configuration (`true`, `false`, or formatter-specific entries)
 - **`lsp`** - Language server configuration (`true`, `false`, or server-specific entries)
 - **`disabled_providers`** / **`enabled_providers`** - Control which providers are available
+- **`privacy_mode`** - Blur PII in the TUI (balance, team name, Kilo Pass usage) and require confirmation before `/profile` reveals account details — see [Privacy Mode](#privacy-mode)
 
 {% callout type="tip" %}
 **Using a model that's not in the built-in list?** You can register any model by adding it under `provider.<provider_id>.models` in your config file. See [Custom Models](/docs/code-with-ai/agents/custom-models) for full details and examples.
@@ -439,19 +488,34 @@ Add this entry to the root-level `keybindings` array:
 
 Save the file and restart Windows Terminal or open a new tab. `Shift+Enter` will now insert a newline in the Kilo prompt instead of submitting the message.
 
+### Product telemetry
+
+Product telemetry is enabled by default to help us understand feature usage and improve reliability. Disable it with `KILO_TELEMETRY_LEVEL=off`, or set `experimental.openTelemetry` to `false` in your **global** Kilo config and restart the CLI. The environment variable takes precedence over config. Project config alone does not control telemetry initialization.
+
+See [Product telemetry and crash reports](/docs/getting-started/settings/product-telemetry#standalone-cli) for complete instructions, including the different controls used by VS Code and Kilo Desktop.
+
 ### OpenTelemetry Export
 
-Kilo telemetry is enabled by default and can be disabled with `experimental.openTelemetry = false`:
+Use OpenTelemetry to monitor Kilo in your own observability tools. This optional export sends diagnostics to an endpoint you configure; it is separate from the product telemetry Kilo collects and is not controlled by the product telemetry opt-out.
+
+If `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the CLI exports OpenTelemetry traces and logs to that OTLP HTTP endpoint. You can also pass `OTEL_EXPORTER_OTLP_HEADERS` as comma-separated `key=value` pairs and `OTEL_RESOURCE_ATTRIBUTES` as comma-separated resource attributes. Request spans include `http.method`, `http.path`, route params such as `session.id` and `message.id`, and internal params under the `opencode.*` namespace.
+
+### Privacy Mode
+
+Set `privacy_mode` to `true` in `kilo.jsonc`, or toggle it with the `/privacy` command, to blur always-visible personal information in the TUI:
 
 ```jsonc
 {
-  "experimental": {
-    "openTelemetry": false,
-  },
+  "privacy_mode": true,
 }
 ```
 
-If `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the CLI exports OpenTelemetry traces and logs to that OTLP HTTP endpoint. You can also pass `OTEL_EXPORTER_OTLP_HEADERS` as comma-separated `key=value` pairs and `OTEL_RESOURCE_ATTRIBUTES` as comma-separated resource attributes. Request spans include `http.method`, `http.path`, route params such as `session.id` and `message.id`, and internal params under the `opencode.*` namespace.
+When privacy mode is on:
+
+- The sidebar footer shows the balance as `•••`, collapses the team name to "Team credits", and hides the Kilo Pass usage block.
+- `/profile` asks for confirmation before revealing your email, name, balance, and team on screen.
+
+Privacy mode only affects the TUI display. The `kilo profile` CLI command is unaffected.
 
 ### Environment Variables
 
@@ -502,6 +566,10 @@ Selecting an "Always run" option will:
 
 Kilo only saves the pattern you select. Approving a specific command does not approve redirected variants or broader command patterns unless that broader option is shown and selected.
 
+### Pasting Large Text
+
+Pasting a large block of text (five or more lines, or over 800 characters) into the prompt collapses it into a placeholder such as `[Pasted ~6 lines]` to keep the prompt readable. To view or edit the pasted text, paste the same text again — the matching placeholder expands in place.
+
 ## Autonomous Mode (Non-Interactive)
 
 Autonomous mode allows Kilo Code to run in automated environments like CI/CD pipelines without requiring user interaction.
@@ -536,7 +604,11 @@ This instructs the AI to proceed without user input.
 
 - `0`: Success (task completed)
 - `124`: Timeout (task exceeded time limit)
-- `1`: Error (initialization or execution failure)
+- `1`: Error (initialization, execution, or request failure)
+
+A run that finishes without an assistant message also exits `1`, reporting `run ended without an assistant message; the model returned no output` on stderr or as a final `error` record with `--format json`. If the prompt request fails, Kilo reports that error instead.
+
+Without `--auto`, a non-interactive run cannot prompt for approval and auto-rejects any permission request it receives. If a run auto-rejected at least one request, it exits `1` with a stderr diagnostic naming the cause, since the task likely did not complete. Pass `--auto` for autonomous use.
 
 ### Example CI/CD Integration
 
@@ -612,6 +684,8 @@ Add to `~/.config/kilo/config.json`:
 ### Using Remote Mode
 
 Once enabled, start a CLI session and open [Cloud Agents](https://app.kilo.ai/cloud). Your local session appears in the dashboard. See [Cloud Agent Remote Connections](/docs/code-with-ai/platforms/cloud-agent#remote-connections) for details.
+
+A connected client can start a session in a child folder of the CLI's launch directory, or continue an existing cloud session locally. Requested folders must remain within the launch directory; absolute paths and paths that escape it are rejected.
 
 ### Requirements
 

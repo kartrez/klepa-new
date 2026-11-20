@@ -14,7 +14,7 @@ function message(finish?: string, error?: Message["error"]): Message {
 }
 
 function todo(status: TodoItem["status"]): TodoItem {
-  return { id: status, content: status, status }
+  return { content: status, status }
 }
 
 describe("terminal", () => {
@@ -121,6 +121,7 @@ describe("terminal", () => {
       remaining: 1,
     })
     expect(terminal({ reason: "error", messages: [message("error")], todos: [] })?.kind).toBe("error")
+    expect(terminal({ reason: "error", messages: [message("stop")], todos: [] })?.kind).toBe("error")
   })
 
   it("does not duplicate a concrete rendered failure", () => {
@@ -136,6 +137,13 @@ describe("terminal", () => {
         hidden: () => true,
       })?.kind,
     ).toBe("error")
+  })
+
+  it("hides superseded turns that handed off to a queued follow-up", () => {
+    expect(
+      terminal({ reason: "superseded", messages: [message("tool-calls")], todos: [todo("pending")] }),
+    ).toBeUndefined()
+    expect(terminal({ reason: "superseded", messages: [message("unknown")], todos: [] })).toBeUndefined()
   })
 
   it("reports only the latest assistant finish reason", () => {

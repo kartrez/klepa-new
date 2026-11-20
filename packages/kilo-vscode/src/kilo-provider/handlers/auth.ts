@@ -14,8 +14,11 @@ export interface AuthContext {
   postMessage(msg: unknown): void
   getWorkspaceDirectory(): string
   disposeGlobal(): Promise<void>
+  invalidateProviderUsage(): void
+  invalidateProviders(): void
   fetchAndSendProviders(): Promise<void>
   fetchAndSendAgents(): Promise<void>
+  fetchAndSendSpeechToTextModels(): Promise<void>
 }
 
 /**
@@ -60,6 +63,8 @@ export async function handleLogin(ctx: AuthContext, attempt: number, getAttempt:
 
     console.log("[Kilo New] KiloProvider: 🔐 Login successful")
 
+    ctx.invalidateProviderUsage()
+    ctx.invalidateProviders()
     await ctx.disposeGlobal()
 
     // Step 3: Fetch profile and push to webview
@@ -90,6 +95,8 @@ export async function handleLogout(ctx: AuthContext): Promise<void> {
   ctx.postMessage({ type: "profileData", data: null })
   ctx.postMessage({ type: "authLoggedOut" })
 
+  ctx.invalidateProviderUsage()
+  ctx.invalidateProviders()
   await ctx.disposeGlobal().catch((error) => {
     console.warn("[Kilo New] KiloProvider: disposeGlobal after logout failed:", error)
   })
@@ -117,6 +124,8 @@ export async function handleSetOrganization(ctx: AuthContext, organizationId: st
     return
   }
 
+  ctx.invalidateProviderUsage()
+  ctx.invalidateProviders()
   await ctx.disposeGlobal()
 
   // Org switch succeeded — refresh profile and providers independently (best-effort)
@@ -135,6 +144,11 @@ export async function handleSetOrganization(ctx: AuthContext, organizationId: st
     await ctx.fetchAndSendAgents()
   } catch (error) {
     console.error("[Kilo New] KiloProvider: Failed to refresh agents after org switch:", error)
+  }
+  try {
+    await ctx.fetchAndSendSpeechToTextModels()
+  } catch (error) {
+    console.error("[Kilo New] KiloProvider: Failed to refresh speech-to-text models after org switch:", error)
   }
 }
 

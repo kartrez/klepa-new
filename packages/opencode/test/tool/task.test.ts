@@ -1,7 +1,9 @@
 import { afterEach, describe, expect } from "bun:test"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Database } from "@opencode-ai/core/database/database"
-import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect" // kilocode_change - Cause/Deferred for resume-hint coverage
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { SessionProjector } from "@opencode-ai/core/session/projector"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect" // kilocode_change - Cause for resume-hint coverage
 import { Agent } from "../../src/agent/agent"
 import { BackgroundJob } from "@/background/job"
 import { EventV2Bridge } from "@/event-v2-bridge"
@@ -13,6 +15,7 @@ import { MessageV2 } from "@/session/message-v2" // kilocode_change
 import type { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, PartID, SessionID } from "../../src/session/schema" // kilocode_change - SessionID used by cost propagation tests
 import { SessionRunState } from "@/session/run-state"
+import { SessionDrain } from "@/kilocode/session/drain" // kilocode_change
 import { SessionStatus } from "@/session/status"
 import { Provider } from "../../src/provider/provider" // kilocode_change
 import { KiloSession } from "../../src/kilocode/session" // kilocode_change
@@ -35,24 +38,31 @@ const ref = {
 }
 
 const layer = (flags: Partial<RuntimeFlags.Info> = {}) =>
-  Layer.mergeAll(
-    Agent.defaultLayer,
-    BackgroundJob.defaultLayer,
-    EventV2Bridge.defaultLayer,
-    Config.defaultLayer,
-    CrossSpawnSpawner.defaultLayer,
-    Session.defaultLayer,
-    SessionRunState.defaultLayer,
-    SessionStatus.defaultLayer,
-    Truncate.defaultLayer,
-    Provider.defaultLayer, // kilocode_change
-    ToolRegistry.defaultLayer,
-    Database.defaultLayer,
-    RuntimeFlags.layer(flags),
-  ).pipe(Layer.provide(Ripgrep.defaultLayer))
+  LayerNode.compile(
+    LayerNode.group([
+      Agent.node,
+      BackgroundJob.node,
+      EventV2Bridge.node,
+      Config.node,
+      CrossSpawnSpawner.node,
+      Session.node,
+      SessionProjector.node,
+      SessionRunState.node,
+      SessionDrain.node, // kilocode_change
+      SessionStatus.node,
+      Truncate.node,
+      ToolRegistry.node,
+      Provider.node, // kilocode_change
+      Database.node,
+      RuntimeFlags.node,
+      Ripgrep.node,
+    ]),
+    [[RuntimeFlags.node, RuntimeFlags.layer(flags)]],
+  )
 
 const it = testEffect(layer())
-const background = testEffect(layer({ experimentalBackgroundSubagents: true }))
+const background = it // kilocode_change - background subagents are enabled by default
+const disabled = testEffect(layer({ experimentalBackgroundSubagents: false })) // kilocode_change
 
 function defer<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -98,6 +108,8 @@ function stubOps(opts?: {
   text?: string
   sessions?: Session.Interface
   childCost?: number
+  error?: NonNullable<SessionV1.Assistant["error"]>
+  toolError?: string
 }): TaskPromptOps {
   return {
     cancel: () => Effect.void,
@@ -105,7 +117,7 @@ function stubOps(opts?: {
     prompt: (input) =>
       Effect.gen(function* () {
         opts?.onPrompt?.(input)
-        const rep = reply(input, opts?.text ?? "done")
+        const rep = reply(input, opts?.text ?? "done", opts?.error, opts?.toolError)
         if (opts?.sessions && opts?.childCost != null) {
           yield* opts.sessions.updateMessage({ ...rep.info, cost: opts.childCost })
         }
@@ -115,7 +127,12 @@ function stubOps(opts?: {
 }
 // kilocode_change end
 
-function reply(input: SessionPrompt.PromptInput, text: string): SessionV1.WithParts {
+function reply(
+  input: SessionPrompt.PromptInput,
+  text: string,
+  error?: NonNullable<SessionV1.Assistant["error"]>,
+  toolError?: string,
+): SessionV1.WithParts {
   const id = MessageID.ascending()
   return {
     info: {
@@ -132,6 +149,7 @@ function reply(input: SessionPrompt.PromptInput, text: string): SessionV1.WithPa
       providerID: input.model?.providerID ?? ref.providerID,
       time: { created: Date.now() },
       finish: "stop",
+      error,
     },
     parts: [
       {
@@ -141,6 +159,24 @@ function reply(input: SessionPrompt.PromptInput, text: string): SessionV1.WithPa
         type: "text",
         text,
       },
+      ...(toolError
+        ? [
+            {
+              id: PartID.ascending(),
+              messageID: id,
+              sessionID: input.sessionID,
+              type: "tool" as const,
+              tool: "read",
+              callID: "call-1",
+              state: {
+                status: "error" as const,
+                input: { filePath: "/external" },
+                error: toolError,
+                time: { start: Date.now(), end: Date.now() },
+              },
+            },
+          ]
+        : []),
     ],
   }
 }
@@ -262,6 +298,69 @@ describe("tool.task", () => {
     }),
   )
 
+  // kilocode_change start - verify forked task children remain resumable
+  it.instance("execute resumes a cloned task session after the parent is forked", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat, assistant } = yield* seed()
+      const child = yield* sessions.create({ parentID: chat.id, title: "Existing child" })
+      yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: assistant.id,
+        sessionID: chat.id,
+        type: "tool",
+        callID: "call_1",
+        tool: "task",
+        metadata: { sessionId: child.id },
+        state: {
+          status: "completed",
+          input: { description: "inspect bug", prompt: "continue", task_id: child.id },
+          output: `<task id="${child.id}"><task_result>done</task_result></task>`,
+          title: "inspect bug",
+          metadata: { sessionId: child.id },
+          time: { start: Date.now(), end: Date.now() },
+        },
+      } as MessageV2.ToolPart)
+
+      const forked = yield* sessions.fork({ sessionID: chat.id })
+      const msgs = yield* sessions.messages({ sessionID: forked.id })
+      const part = msgs.flatMap((msg) => msg.parts).find((item) => item.type === "tool" && item.tool === "task") as
+        | MessageV2.ToolPart
+        | undefined
+      if (!part || part.state.status !== "completed") throw new Error("expected a completed task part")
+      const id = part.state.input.task_id
+      if (typeof id !== "string") throw new Error("expected a cloned task ID")
+      const parent = msgs.find((msg) => msg.info.role === "assistant")
+      if (!parent || parent.info.role !== "assistant") throw new Error("expected a forked assistant message")
+
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      let seen: SessionPrompt.PromptInput | undefined
+      yield* def.execute(
+        {
+          description: "inspect bug",
+          prompt: "continue from the fork",
+          subagent_type: "general",
+          task_id: id,
+        },
+        {
+          sessionID: forked.id,
+          messageID: parent.info.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: stubOps({ onPrompt: (input) => (seen = input) }) },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect(seen?.sessionID).toBe(SessionID.descending(id))
+      expect((yield* sessions.get(SessionID.descending(id))).parentID).toBe(forked.id)
+    }),
+  )
+  // kilocode_change end
+
   // kilocode_change start - resumed children rebuild parent platform attribution after restart
   it.instance("execute preserves platform attribution when resuming a task", () =>
     Effect.gen(function* () {
@@ -294,6 +393,97 @@ describe("tool.task", () => {
 
       expect(KiloSession.resolvePlatform(child.id)).toBe("agent-manager")
       expect(KiloSession.resolveRoot(child.id)).toBe(chat.id)
+    }),
+  )
+  // kilocode_change end
+
+  // kilocode_change start - preserve upstream terminal child failure coverage with Kilo's resume hint
+  it.instance("execute surfaces child errors with a resumable task_id", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+
+      const exit = yield* def
+        .execute(
+          {
+            description: "inspect bug",
+            prompt: "look into the cache key path",
+            subagent_type: "general",
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: {
+              promptOps: stubOps({
+                text: "",
+                error: new SessionV1.APIError({ message: "Network connection lost", isRetryable: false }).toObject(),
+              }),
+            },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+        .pipe(Effect.exit)
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isSuccess(exit)) throw new Error("expected task failure")
+      const child = (yield* sessions.children(chat.id))[0]
+      expect(child).toBeDefined()
+      const failure = Cause.squash(exit.cause)
+      expect(failure).toBeInstanceOf(Error)
+      if (!(failure instanceof Error)) throw new Error("expected Error defect")
+      expect(failure.message).toContain("Network connection lost")
+      expect(failure.message).toContain(`task_id="${child?.id}"`)
+      expect(failure.message).toContain("can be resumed")
+    }),
+  )
+
+  it.instance("execute surfaces terminal child tool errors with a resumable task_id", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+
+      const exit = yield* def
+        .execute(
+          {
+            description: "inspect external directory",
+            prompt: "read the external directory",
+            subagent_type: "general",
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: {
+              promptOps: stubOps({
+                text: "I will inspect the directory.",
+                toolError: "The user rejected permission to use this specific tool call.",
+              }),
+            },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+        .pipe(Effect.exit)
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isSuccess(exit)) throw new Error("expected task failure")
+      const child = (yield* sessions.children(chat.id))[0]
+      const failure = Cause.squash(exit.cause)
+      expect(failure).toBeInstanceOf(Error)
+      if (!(failure instanceof Error)) throw new Error("expected Error defect")
+      expect(failure.message).toContain("The user rejected permission to use this specific tool call.")
+      expect(failure.message).toContain(`task_id="${child?.id}"`)
+      expect(failure.message).toContain("can be resumed")
     }),
   )
   // kilocode_change end
@@ -431,6 +621,150 @@ describe("tool.task", () => {
     }),
   )
 
+  // kilocode_change start - regression for #13469: a trailing synthetic empty text part (the memory marker)
+  // or an ignored length-warning part must not be picked as the task result
+  it.instance("returns the real answer when synthetic or ignored text parts trail it", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      const promptOps: TaskPromptOps = {
+        ...stubOps(),
+        prompt: (input) =>
+          Effect.sync(() => {
+            const rep = reply(input, "the actual answer")
+            const id = MessageID.ascending()
+            return {
+              ...rep,
+              parts: [
+                ...rep.parts,
+                {
+                  id: PartID.ascending(),
+                  messageID: id,
+                  sessionID: input.sessionID,
+                  type: "text",
+                  text: "output limit hit",
+                  ignored: true,
+                },
+                {
+                  id: PartID.ascending(),
+                  messageID: id,
+                  sessionID: input.sessionID,
+                  type: "text",
+                  text: "",
+                  synthetic: true,
+                  ignored: true,
+                },
+              ],
+            }
+          }),
+      }
+
+      const result = yield* def.execute(
+        {
+          description: "inspect bug",
+          prompt: "look into the cache key path",
+          subagent_type: "general",
+        },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect(result.output).toContain("the actual answer")
+      expect(result.output).not.toContain("output limit hit")
+      expect(result.output).not.toContain("<task_result></task_result>")
+    }),
+  )
+  // kilocode_change end
+
+  it.instance("prevents subagents from launching subagents by default", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat, assistant } = yield* seed()
+      const child = yield* sessions.create({ parentID: chat.id, title: "child" })
+      const nestedAssistant = yield* sessions.updateMessage({
+        ...assistant,
+        id: MessageID.ascending(),
+        parentID: MessageID.ascending(),
+        sessionID: child.id,
+      })
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      let asked = false
+
+      const exit = yield* def
+        .execute(
+          {
+            description: "inspect bug",
+            prompt: "look into the cache key path",
+            subagent_type: "general",
+          },
+          {
+            sessionID: child.id,
+            messageID: nestedAssistant.id,
+            agent: "general",
+            abort: new AbortController().signal,
+            extra: { promptOps: stubOps() },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.sync(() => (asked = true)),
+          },
+        )
+        .pipe(Effect.exit)
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      expect(asked).toBe(false)
+      expect(yield* sessions.children(child.id)).toHaveLength(0)
+    }),
+  )
+
+  it.instance(
+    "allows nested subagents up to the configured depth",
+    () =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const { chat, assistant } = yield* seed()
+        const child = yield* sessions.create({ parentID: chat.id, title: "child" })
+        const nestedAssistant = yield* sessions.updateMessage({
+          ...assistant,
+          id: MessageID.ascending(),
+          parentID: MessageID.ascending(),
+          sessionID: child.id,
+        })
+        const tool = yield* TaskTool
+        const def = yield* tool.init()
+
+        const result = yield* def.execute(
+          {
+            description: "inspect bug",
+            prompt: "look into the cache key path",
+            subagent_type: "general",
+          },
+          {
+            sessionID: child.id,
+            messageID: nestedAssistant.id,
+            agent: "general",
+            abort: new AbortController().signal,
+            extra: { promptOps: stubOps() },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        expect((yield* sessions.get(result.metadata.sessionId)).parentID).toBe(child.id)
+      }),
+    { config: { subagent_depth: 2 } },
+  )
+
   it.instance(
     "execute shapes child permissions for task, todowrite, and primary tools",
     () =>
@@ -491,7 +825,6 @@ describe("tool.task", () => {
         // kilocode_change end
         expect(seen?.tools).toEqual({
           question: false, // kilocode_change - subagents cannot prompt the user directly
-          interactive_terminal: false, // kilocode_change - subagents cannot take over the user's terminal
           todowrite: false,
           task: false, // kilocode_change - Kilo disallows nested subagents
           bash: false,
@@ -631,7 +964,8 @@ describe("tool.task", () => {
     }),
   )
   // kilocode_change end
-  it.instance("rejects background execution when the experiment is disabled", () =>
+  // kilocode_change start - preserve the disabled-background regression test
+  disabled.instance("rejects background execution when the experiment is disabled", () =>
     Effect.gen(function* () {
       const { chat, assistant } = yield* seed()
       const tool = yield* TaskTool
@@ -661,6 +995,7 @@ describe("tool.task", () => {
       expect(Exit.isFailure(exit)).toBe(true)
     }),
   )
+  // kilocode_change end
 
   it.instance("promotes a running foreground task without restarting it", () =>
     Effect.gen(function* () {

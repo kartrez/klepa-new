@@ -12,13 +12,13 @@ describe("test profiles", () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.files.length).toBeGreaterThan(20)
-    expect(result.files).toContain("pty/pty-shell.test.ts")
+    expect(result.files).toContain("server/httpapi-v2-pty.test.ts")
     expect(result.files).toContain("kilocode/cli/install-artifact.test.ts")
+    expect(result.files).toContain("kilocode/cli/tui/thread.test.ts")
     expect(result.files).toContain("kilocode/sandbox/macos-confinement.test.ts")
     expect(result.files).toContain("kilocode/core-watcher.test.ts")
     expect(result.files).toContain("kilocode/background-process.test.ts")
     expect(result.files).toContain("filesystem/filesystem.test.ts")
-    expect(result.files).toContain("kilocode/interactive-terminal.test.ts")
     const sandbox = all.filter((file) => file.startsWith("kilocode/sandbox/"))
     expect(result.files.filter((file) => file.startsWith("kilocode/sandbox/"))).toEqual(sandbox)
     expect(result.files).not.toContain("cli/run/footer.view.test.tsx")
@@ -47,7 +47,7 @@ describe("test profiles", () => {
     )
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.files).toContain("pty/pty-shell.test.ts")
+    expect(result.files).toContain("server/httpapi-v2-pty.test.ts")
     expect(result.files.some((file) => file.includes("\\"))).toBe(false)
   })
 

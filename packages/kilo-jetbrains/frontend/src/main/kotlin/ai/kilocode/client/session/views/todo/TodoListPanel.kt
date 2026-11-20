@@ -1,15 +1,17 @@
 package ai.kilocode.client.session.views.todo
 
 import ai.kilocode.client.plugin.KiloBundle
+import ai.kilocode.client.session.ui.SessionSurface
 import ai.kilocode.client.session.ui.style.SessionEditorStyle
 import ai.kilocode.client.session.ui.style.SessionUiStyle
+import ai.kilocode.client.ui.PlainLabel
 import ai.kilocode.client.ui.UiStyle
 import ai.kilocode.client.ui.layout.Stack
 import ai.kilocode.client.ui.layout.StackAxis
+import ai.kilocode.client.ui.oneLine
 import ai.kilocode.rpc.dto.TodoDto
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
-import com.intellij.xml.util.XmlStringUtil
 import java.awt.BasicStroke
 import java.awt.Color
 import java.awt.Component
@@ -36,6 +38,18 @@ class TodoListPanel(
         sync()
     }
 
+    // The todo list is a raised content surface painted with the editor background, rounded to the
+    // same block arc as the card header. It stays non-opaque so the rounded corners reveal the
+    // transparent card body behind them; children are clipped to the rounded shape.
+    override fun paintComponent(g: Graphics) {
+        SessionSurface.fill(g, width, height)
+        super.paintComponent(g)
+    }
+
+    override fun paintChildren(g: Graphics) {
+        SessionSurface.clipped(g, width, height) { super.paintChildren(it) }
+    }
+
     fun update(todos: List<TodoDto>, hiddenBefore: Int = 0, hiddenAfter: Int = 0) {
         val size = todos.size != items.size
         items = todos
@@ -52,8 +66,8 @@ class TodoListPanel(
         this.style = style
         prior.font = style.smallFont
         later.font = style.smallFont
-        prior.foreground = UiStyle.Colors.weak()
-        later.foreground = UiStyle.Colors.weak()
+        prior.foreground = SessionUiStyle.Text.Secondary.foreground()
+        later.foreground = SessionUiStyle.Text.Secondary.foreground()
         rows.forEachIndexed { index, row -> row.update(items[index], style) }
         syncHidden()
     }
@@ -70,7 +84,7 @@ class TodoListPanel(
 
     internal fun rowCheckBorder(index: Int) = rows[index].icon.border
 
-    internal fun rowCheckAccessibleName(index: Int) = rows[index].check.accessibleContext.accessibleName
+    internal fun rowCheckAccessibleName(index: Int) = rows[index].text.accessibleContext.accessibleName
 
     internal fun rowFont(index: Int) = rows[index].text.font
 
@@ -85,7 +99,7 @@ class TodoListPanel(
         items.forEach { todo ->
             val row = Row(todo, style)
             rows.add(row)
-            next(row.panel)
+            next(row.text)
         }
         next(later)
         syncHidden()
@@ -109,18 +123,18 @@ class TodoListPanel(
         return KiloBundle.message(key, count)
     }
 
+    /**
+     * One label per row: the check box is the label's icon rather than a sibling component, so a to-do list
+     * adds a single component per item to the transcript tree.
+     */
     private class Row(todo: TodoDto, style: SessionEditorStyle) {
         var icon = TodoCheckIcon(false)
             private set
-        val check = JBLabel().apply {
+        val text = PlainLabel().apply {
             isFocusable = false
             icon = this@Row.icon
-        }
-        val text = JBLabel()
-        val panel = Stack.horizontal(UiStyle.Gap.sm()).apply {
+            iconTextGap = UiStyle.Gap.sm()
             border = JBUI.Borders.empty(UiStyle.Gap.xs(), 0)
-            next(check)
-            next(text)
         }
 
         init {
@@ -130,13 +144,14 @@ class TodoListPanel(
         fun update(todo: TodoDto, style: SessionEditorStyle) {
             val done = todo.status == "completed"
             syncIcon(done)
-            check.accessibleContext.accessibleName = KiloBundle.message(accessible(done), todo.content)
-            check.accessibleContext.accessibleDescription = check.accessibleContext.accessibleName
-            text.text = label(todo.content, done)
+            text.accessibleContext.accessibleName = KiloBundle.message(accessible(done), todo.content)
+            text.accessibleContext.accessibleDescription = text.accessibleContext.accessibleName
+            text.text = oneLine(todo.content)
+            text.strike = done
             text.font = style.regularFont
             text.foreground = when {
                 !done -> style.editorForeground
-                else -> UiStyle.Colors.weak()
+                else -> SessionUiStyle.Text.Secondary.foreground()
             }
         }
 
@@ -146,13 +161,7 @@ class TodoListPanel(
             val border = SessionUiStyle.View.Todo.checkBorder()
             if (icon.done == done && icon.bg == bg && icon.fg == fg && icon.border == border) return
             icon = TodoCheckIcon(done, bg, fg, border)
-            check.icon = icon
-        }
-
-        private fun label(value: String, done: Boolean): String {
-            val text = XmlStringUtil.escapeString(value)
-            if (!done) return "<html>$text</html>"
-            return "<html><s>$text</s></html>"
+            text.icon = icon
         }
 
         private fun accessible(done: Boolean) = if (done) {

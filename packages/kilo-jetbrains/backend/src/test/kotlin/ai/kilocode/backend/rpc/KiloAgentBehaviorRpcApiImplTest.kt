@@ -120,6 +120,76 @@ class KiloAgentBehaviorRpcApiImplTest {
     }
 
     @Test
+    fun `command files and remove command call CLI endpoints`() = runBlocking {
+        val dir = Files.createTempDirectory("kilo-command-test")
+        val file = Files.createDirectories(dir.resolve("command")).resolve("review.md")
+        Files.writeString(file, "---\ndescription: Review code\n---\n\nReview $" + "ARGUMENTS")
+        mock.commandFiles = """[
+            {"name":"review","description":"Review code","agent":"reviewer","model":"anthropic/claude-sonnet-4-6","variant":"high","source":"command","builtin":false,"location":"$file","editable":true,"content":"Review","subtask":true},
+            {"name":"init","source":"command","builtin":true,"location":"builtin","editable":false,"content":"Init"}
+        ]""".trimIndent()
+        val rpc = rpc()
+
+        val commands = rpc.commandFiles("/test project")
+        assertEquals(listOf("review", "init"), commands.map { it.name })
+        assertEquals(true, commands.single { it.name == "review" }.editable)
+        assertEquals("reviewer", commands.single { it.name == "review" }.agent)
+        assertEquals("anthropic/claude-sonnet-4-6", commands.single { it.name == "review" }.model)
+        assertEquals("high", commands.single { it.name == "review" }.variant)
+        assertEquals(true, commands.single { it.name == "review" }.subtask)
+        assertEquals(false, commands.single { it.name == "init" }.editable)
+
+        assertTrue(rpc.removeCommand("/test project", file.toString()))
+        assertEquals("{\"location\":\"$file\"}", mock.lastCommandRemoveBody)
+        assertEquals(1, mock.requestCount("/kilocode/command/remove"))
+
+        mock.commandRemoveStatus = 400
+        val err = assertFailsWith<RuntimeException> {
+            rpc.removeCommand("/test", "/tmp/missing.md")
+        }
+        assertContains(err.message.orEmpty(), "HTTP 400")
+
+        assertTrue(rpc.reloadCommands("/test project"))
+        assertEquals(1, mock.requestCount("/instance/reload"))
+    }
+
+    @Test
+    fun `save commands validates known and new project command paths`() = runBlocking {
+        val project = Files.createTempDirectory("kilo-command-project")
+        val known = Files.createDirectories(project.resolve(".kilo/command")).resolve("known.md")
+        val added = project.resolve(".kilo/commands/new.md")
+        val other = Files.createTempFile("kilo-command-other", ".md")
+        Files.writeString(known, "old")
+        Files.writeString(other, "old")
+        mock.commandFiles = """[
+            {"name":"known","source":"command","builtin":false,"location":"$known","editable":true,"content":"old"}
+        ]""".trimIndent()
+        val rpc = rpc()
+
+        assertTrue(rpc.saveCommands(project.toString(), mapOf(known.toString() to "new", added.toString() to "created")))
+        assertEquals("new", Files.readString(known))
+        assertEquals("created", Files.readString(added))
+        assertEquals(1, mock.requestCount("/kilocode/command/files"))
+
+        assertFalse(rpc.saveCommands(project.toString(), mapOf(other.toString() to "nope")))
+        assertEquals("old", Files.readString(other))
+    }
+
+    @Test
+    fun `save commands validates new global command paths`() = runBlocking {
+        val project = Files.createTempDirectory("kilo-command-project")
+        val config = Files.createTempDirectory("kilo-command-config")
+        val added = config.resolve("commands/global.md")
+        mock.path = """{"home":"/tmp","state":"/tmp","config":"$config","worktree":"$project","directory":"$project"}"""
+        val rpc = rpc()
+
+        assertTrue(rpc.saveCommands(project.toString(), mapOf(added.toString() to "global command")))
+
+        assertEquals("global command", Files.readString(added))
+        assertEquals(1, mock.requestCount("/path"))
+    }
+
+    @Test
     fun `url cached skills are read only`() = runBlocking {
         val cache = Path.of(System.getProperty("user.home"), ".cache", "kilo", "skills", "remote")
         val file = Files.createDirectories(cache).resolve("SKILL.md")
@@ -246,6 +316,8 @@ class KiloAgentBehaviorRpcApiImplTest {
             command = listOf("node", "server.js"),
             environment = mapOf("TOKEN" to "x"),
         )))
+        assertContains(mock.lastConfigPatchBody.orEmpty(), "\"scope\":\"global\"")
+        assertContains(mock.lastConfigPatchBody.orEmpty(), "\"set\":{\"mcp\"")
         assertContains(mock.lastConfigPatchBody.orEmpty(), "\"global-added\"")
         assertContains(mock.lastConfigPatchBody.orEmpty(), "\"environment\":{\"TOKEN\":\"x\"}")
         assertEquals("local", rpc.mcpConfig("/test dir")["global"]?.config?.type)
@@ -256,7 +328,8 @@ class KiloAgentBehaviorRpcApiImplTest {
             url = "https://mcp.example.test",
             headers = mapOf("Authorization" to "Bearer t"),
         )))
-        assertEquals("/config?directory=%2Ftest+dir", mock.lastWorkspaceConfigPatchPath)
+        assertEquals("/config/overlay?directory=%2Ftest+dir", mock.lastWorkspaceConfigPatchPath)
+        assertContains(mock.lastWorkspaceConfigPatchBody.orEmpty(), "\"scope\":\"project\"")
         assertContains(mock.lastWorkspaceConfigPatchBody.orEmpty(), "\"workspace-added\"")
         assertEquals("workspace", rpc.mcpConfig("/test dir")["workspace-added"]?.scope)
 
@@ -266,7 +339,7 @@ class KiloAgentBehaviorRpcApiImplTest {
         assertEquals("global", rpc.mcpConfig("/test dir")["shared"]?.scope)
 
         assertTrue(rpc.saveMcp("/test dir", "workspace-added", "workspace", null))
-        assertContains(mock.lastWorkspaceConfigPatchBody.orEmpty(), "\"workspace-added\":null")
+        assertContains(mock.lastWorkspaceConfigPatchBody.orEmpty(), "\"unset\":[[\"mcp\",\"workspace-added\"]]")
         assertFalse(rpc.mcpConfig("/test dir").containsKey("workspace-added"))
     }
 
@@ -283,8 +356,97 @@ class KiloAgentBehaviorRpcApiImplTest {
         assertContains(mock.lastMcpActionPath.orEmpty(), "/mcp/local%20server/connect")
         assertTrue(rpc.mcpDisconnect("/test", "local server"))
         assertContains(mock.lastMcpActionPath.orEmpty(), "/mcp/local%20server/disconnect")
-        assertTrue(rpc.mcpAuthenticate("/test", "local server"))
+        val authResult = rpc.mcpAuthenticate("/test", "local server")
+        assertEquals("connected", authResult.status)
         assertContains(mock.lastMcpActionPath.orEmpty(), "/mcp/local%20server/auth/authenticate")
+    }
+
+    /**
+     * The CLI classifies recoverable auth failures itself and reports `needs_auth`, so the wire path
+     * only has to carry that status through for Settings, Marketplace, and the session prompt.
+     */
+    @Test
+    fun `mcp status carries needs sign in through the wire path`() = runBlocking {
+        mock.mcp = """{"anaconda":{"status":"needs_auth","error":"Unauthorized: authentication required"}}"""
+        val rpc = rpc()
+
+        val status = rpc.mcpStatus("/test").single()
+
+        assertEquals("needs_auth", status.status)
+        assertEquals("Unauthorized: authentication required", status.error)
+    }
+
+    /**
+     * Auth-shaped error text on a `failed` status must not be upgraded by the plugin. Doing so would
+     * duplicate the CLI's classification rules and drift from them.
+     */
+    @Test
+    fun `mcp status does not reclassify failed from its error text`() = runBlocking {
+        mock.mcp = """{"anaconda":{"status":"failed","error":"SSE error: Non-200 status code (403)"}}"""
+        val rpc = rpc()
+
+        val status = rpc.mcpStatus("/test").single()
+
+        assertEquals("failed", status.status)
+        assertEquals("SSE error: Non-200 status code (403)", status.error)
+    }
+
+    @Test
+    fun `mcp status keeps unrelated failures failed`() = runBlocking {
+        mock.mcp = """{"anaconda":{"status":"failed","error":"Connection closed"}}"""
+        val rpc = rpc()
+
+        assertEquals("failed", rpc.mcpStatus("/test").single().status)
+    }
+
+    /**
+     * In split mode the CLI runs on the host and the user sits at the client, so the plugin must ask
+     * for the authorization URL instead of letting the CLI open a browser the user cannot see.
+     */
+    @Test
+    fun `mcp authenticate asks the CLI for external browser handling`() = runBlocking {
+        val rpc = rpc()
+
+        rpc.mcpAuthenticate("/test", "linear")
+
+        assertContains(mock.lastMcpAuthenticateBody.orEmpty(), "\"external\":true")
+    }
+
+    @Test
+    fun `mcp auth cancel posts to the cancel endpoint`() = runBlocking {
+        val rpc = rpc()
+
+        mock.mcpAuthCancelStatus = 200
+        assertTrue(rpc.mcpAuthCancel("/test", "linear"))
+        assertEquals("/mcp/linear/auth/cancel", mock.lastMcpAuthCancelPath)
+
+        mock.mcpAuthCancelStatus = 404
+        assertFalse(rpc.mcpAuthCancel("/test", "missing"))
+    }
+
+    @Test
+    fun `mcp auth remove and browser open failed event`() = runBlocking {
+        val rpc = rpc()
+
+        mock.mcpAuthRemoveStatus = 200
+        assertTrue(rpc.mcpAuthRemove("/test", "linear"))
+        assertContains(mock.lastMcpAuthDeletePath.orEmpty(), "/mcp/linear/auth")
+
+        mock.mcpAuthRemoveStatus = 404
+        assertFalse(rpc.mcpAuthRemove("/test", "missing"))
+    }
+
+    @Test
+    fun `mcp authenticate maps failure statuses`() = runBlocking {
+        val rpc = rpc()
+
+        mock.mcpActionStatus = 400
+        mock.mcpAuthenticateResponse = """{"error":"unsupported"}"""
+        assertEquals("unsupported", rpc.mcpAuthenticate("/test", "linear").status)
+
+        mock.mcpActionStatus = 404
+        mock.mcpAuthenticateResponse = """{"error":"not found"}"""
+        assertEquals("not_found", rpc.mcpAuthenticate("/test", "linear").status)
     }
 
     private suspend fun rpc(): KiloAgentBehaviorRpcApiImpl = KiloAgentBehaviorRpcApiImpl(app())

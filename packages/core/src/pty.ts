@@ -1,168 +1,137 @@
 export * as Pty from "./pty"
 
-import type { Disp, Proc } from "#pty"
+import { makeGlobalNode, makeLocationNode } from "./effect/app-node" // kilocode_change
 import { Context, Effect, Layer, Schema, Types } from "effect"
+import { Pty } from "@opencode-ai/schema/pty"
+import { Config } from "./config"
 import { EventV2 } from "./event"
 import { Location } from "./location"
-import { NonNegativeInt, PositiveInt } from "./schema"
 import { PtyID } from "./pty/schema"
 import { SessionSchema } from "./session/schema" // kilocode_change
+import { Shell } from "./shell"
 import { lazy } from "./util/lazy"
+import { KiloPtySelfCommand } from "./kilocode/pty-self-command" // kilocode_change
+import * as KiloPtyRegistry from "./kilocode/pty/registry" // kilocode_change
+import type { Active, Subscriber } from "./kilocode/pty/registry" // kilocode_change
 
 const BUFFER_LIMIT = 1024 * 1024 * 2
-const BUFFER_CHUNK = 64 * 1024
-const encoder = new TextEncoder()
+// Exited sessions stay observable (status, exit code, retained output) until removed explicitly.
+// Cap retention so abandoned terminals do not accumulate unbounded buffers.
+const EXITED_LIMIT = 25
 const pty = lazy(() => import("#pty"))
 
-type Socket = {
-  readyState: number
-  data?: unknown
-  send: (data: string | Uint8Array | ArrayBuffer) => void
-  close: (code?: number, reason?: string) => void
-}
-
-type Active = {
-  info: Info
-  process: Proc
-  buffer: string
-  bufferCursor: number
-  cursor: number
-  subscribers: Map<unknown, Socket>
-  listeners: Disp[]
-}
-
-const sock = (ws: Socket) => (ws.data && typeof ws.data === "object" ? ws.data : ws)
-
-// WebSocket control frame: 0x00 + UTF-8 JSON.
-const meta = (cursor: number) => {
-  const json = JSON.stringify({ cursor })
-  const bytes = encoder.encode(json)
-  const out = new Uint8Array(bytes.length + 1)
-  out[0] = 0
-  out.set(bytes, 1)
-  return out
-}
-
-export const Info = Schema.Struct({
-  id: PtyID,
-  title: Schema.String,
-  command: Schema.String,
-  args: Schema.Array(Schema.String),
-  cwd: Schema.String,
-  status: Schema.Literals(["running", "exited"]),
-  // Windows ConPTY assigns the child pid asynchronously, so 0 is valid at spawn time.
-  pid: NonNegativeInt,
-  sessionID: Schema.optional(Schema.NullOr(SessionSchema.ID)), // kilocode_change
-}).annotate({ identifier: "Pty" })
-
+// kilocode_change - the Kilo `sessionID` field now lives on the canonical shared schema (see
+// packages/schema/src/pty.ts) so the generated SDK carries it; reuse that schema verbatim here.
+export const Info = Pty.Info
 export type Info = Types.DeepMutable<typeof Info.Type>
 
-export const CreateInput = Schema.Struct({
-  command: Schema.optional(Schema.String),
-  args: Schema.optional(Schema.Array(Schema.String)),
-  cwd: Schema.optional(Schema.String),
-  title: Schema.optional(Schema.String),
-  env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-})
+export const CreateInput = Pty.CreateInput
 
 export type CreateInput = Types.DeepMutable<typeof CreateInput.Type>
 
-export type PreparedCreate = {
-  readonly command: string
-  readonly args: string[]
-  readonly cwd: string
-  readonly title?: string
-  readonly env: Record<string, string>
-}
-
 export const UpdateInput = Schema.Struct({
-  title: Schema.optional(Schema.String),
+  ...Pty.UpdateInput.fields,
   sessionID: Schema.optional(Schema.NullOr(SessionSchema.ID)), // kilocode_change
-  size: Schema.optional(
-    Schema.Struct({
-      rows: PositiveInt,
-      cols: PositiveInt,
-    }),
-  ),
 })
 
 export type UpdateInput = Types.DeepMutable<typeof UpdateInput.Type>
+
+// kilocode_change - the shared events already carry Kilo's extended Info (see packages/schema/src/pty.ts),
+// so reuse them verbatim instead of redefining pty.created/pty.updated here.
+export const Event = Pty.Event
+
+export type AttachInput = {
+  // Absolute output cursor to replay from. -1 tails from the current end; omitted replays the full retained buffer.
+  readonly cursor?: number
+  // Callbacks fire synchronously from the native PTY data path; keep them non-blocking.
+  readonly onData: (chunk: string) => void
+  // Fired once when the session stops producing output: process exit (exitCode set), removal, or service teardown.
+  readonly onEnd: (event: { exitCode?: number }) => void
+  // Canonical routes can replay retained output after exit; legacy callers retain the former error.
+  readonly allowExited?: boolean // kilocode_change
+}
+
+export type Attachment = {
+  // Retained output from the requested cursor to the current end.
+  readonly replay: string
+  // Absolute output cursor after replay.
+  readonly cursor: number
+  readonly write: (data: string) => void
+  // Starts live delivery after the caller has applied replay and cursor metadata.
+  readonly activate: () => void
+  readonly detach: () => void
+}
 
 export class NotFoundError extends Schema.TaggedErrorClass<NotFoundError>()("Pty.NotFoundError", {
   ptyID: PtyID,
 }) {}
 
-export const Event = {
-  Created: EventV2.define({ type: "pty.created", schema: { info: Info } }),
-  Updated: EventV2.define({ type: "pty.updated", schema: { info: Info } }),
-  Exited: EventV2.define({ type: "pty.exited", schema: { id: PtyID, exitCode: NonNegativeInt } }),
-  Deleted: EventV2.define({ type: "pty.deleted", schema: { id: PtyID } }),
-}
+export class ExitedError extends Schema.TaggedErrorClass<ExitedError>()("Pty.ExitedError", {
+  ptyID: PtyID,
+}) {}
 
 export interface Interface {
   readonly list: () => Effect.Effect<Info[]>
   readonly get: (id: PtyID) => Effect.Effect<Info, NotFoundError>
-  readonly create: (input: PreparedCreate) => Effect.Effect<Info>
+  readonly create: (input: CreateInput) => Effect.Effect<Info>
   readonly update: (id: PtyID, input: UpdateInput) => Effect.Effect<Info, NotFoundError>
   readonly remove: (id: PtyID) => Effect.Effect<void, NotFoundError>
-  readonly resize: (id: PtyID, cols: number, rows: number) => Effect.Effect<void, NotFoundError>
+  readonly removeDirectory: (location: Location.Ref) => Effect.Effect<void> // kilocode_change
   readonly write: (id: PtyID, data: string) => Effect.Effect<void, NotFoundError>
-  readonly connect: (
-    id: PtyID,
-    ws: Socket,
-    cursor?: number,
-  ) => Effect.Effect<
-    { onMessage: (message: string | ArrayBuffer) => void; onClose: () => void } | undefined,
-    NotFoundError
-  >
+  readonly attach: (id: PtyID, input: AttachInput) => Effect.Effect<Attachment, NotFoundError | ExitedError>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/Pty") {}
 
-export const layer = Layer.effect(
+const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const events = yield* EventV2.Service
     const location = yield* Location.Service
+    const config = yield* Config.Service
     const context = yield* Effect.context()
     const runFork = Effect.runForkWith(context)
-    const sessions = new Map<PtyID, Active>()
+    const sessions = KiloPtyRegistry.sessions // kilocode_change
 
-    function teardown(session: Active) {
-      for (const listener of session.listeners) listener.dispose()
-      session.listeners.length = 0
-      try {
-        session.process.kill()
-      } catch {}
-      for (const [sub, ws] of session.subscribers.entries()) {
+    function notifyEnd(session: Active, event: { exitCode?: number }) {
+      for (const subscriber of session.subscribers.values()) {
+        if (!subscriber.active) {
+          subscriber.end = event
+          continue
+        }
         try {
-          if (sock(ws) === sub) ws.close()
-        } catch {}
+          subscriber.onEnd(event)
+        } catch (error) {
+          Effect.runSync(Effect.logDebug("PTY subscriber end callback failed", { id: session.info.id, error }))
+        }
       }
       session.subscribers.clear()
     }
 
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        for (const session of sessions.values()) teardown(session)
-        sessions.clear()
-      }),
-    )
-
     const requireSession = Effect.fn("Pty.requireSession")(function* (id: PtyID) {
       const session = sessions.get(id)
-      if (!session) return yield* new NotFoundError({ ptyID: id })
+      const owner = Location.Ref.make({ directory: location.directory, workspaceID: location.workspaceID })
+      if (!session || !KiloPtyRegistry.sameLocation(session.location, owner))
+        return yield* new NotFoundError({ ptyID: id })
       return session
     })
 
     const removeSession = Effect.fnUntraced(function* (id: PtyID) {
+      // kilocode_change start - removal and its deleted event are one uninterruptible lifecycle transition.
       const session = sessions.get(id)
-      if (!session) return false
-      sessions.delete(id)
-      yield* Effect.logInfo("removing session", { id })
-      teardown(session)
-      yield* events.publish(Event.Deleted, { id: session.info.id })
-      return true
+      if (!session || !KiloPtyRegistry.claimRemoval(id)) return
+      yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          yield* Effect.logInfo("removing session", { id })
+          yield* Effect.promise(() => KiloPtyRegistry.teardown(session))
+          sessions.delete(id)
+          KiloPtyRegistry.removeExited(session)
+          yield* events
+            .publish(Event.Deleted, { id: session.info.id }, { location: session.location })
+            .pipe(Effect.catch((error) => Effect.logWarning("failed to publish PTY deleted event", { id, error })))
+        }).pipe(Effect.ensuring(Effect.sync(() => KiloPtyRegistry.releaseRemoval(id)))),
+      )
+      // kilocode_change end
     })
 
     const remove = Effect.fn("Pty.remove")(function* (id: PtyID) {
@@ -170,59 +139,104 @@ export const layer = Layer.effect(
       yield* removeSession(id)
     })
 
+    const removeDirectory = Effect.fn("Pty.removeDirectory")(function* (target: Location.Ref) {
+      const owned = Array.from(sessions.values()).filter(
+        (session) =>
+          KiloPtyRegistry.sameDirectory(session.location.directory, target.directory) &&
+          session.location.workspaceID === target.workspaceID,
+      )
+      yield* Effect.forEach(owned, (session) => removeSession(session.info.id), { concurrency: 4, discard: true })
+    })
+
     const list = Effect.fn("Pty.list")(function* () {
-      return Array.from(sessions.values()).map((session) => session.info)
+      const owner = Location.Ref.make({ directory: location.directory, workspaceID: location.workspaceID })
+      return Array.from(sessions.values())
+        .filter((session) => KiloPtyRegistry.sameLocation(session.location, owner))
+        .map((session) => session.info)
     })
 
     const get = Effect.fn("Pty.get")(function* (id: PtyID) {
       return (yield* requireSession(id)).info
     })
 
-    const create = Effect.fn("Pty.create")(function* (input: PreparedCreate) {
+    const createBody = Effect.fn("Pty.createBody")(function* (input: CreateInput, owner: Location.Ref) {
       const id = PtyID.ascending()
-      yield* Effect.logInfo("creating session", { id, cmd: input.command, args: input.args, cwd: input.cwd })
+      // kilocode_change start - resolve Kilo self-commands to the real binary, arguments, and project cwd
+      const resolved = KiloPtySelfCommand.resolve({
+        command: input.command,
+        args: input.args ? [...input.args] : undefined,
+        cwd: input.cwd,
+      })
+      const implicit = !resolved.command
+      const command = resolved.command || Shell.preferred(Config.latest(yield* config.entries(), "shell"))
+      const base = resolved.args ?? []
+      const args = implicit && Shell.login(command) ? [...base, "-l"] : [...base]
+      const cwd = resolved.cwd || location.directory
+      // kilocode_change end
+      const env = {
+        ...process.env,
+        ...input.env,
+        TERM: "xterm-256color",
+        KILO_TERMINAL: "1",
+        KILO_PTY_ID: id, // kilocode_change - let nested Kilo processes identify their parent terminal
+      } as Record<string, string>
+      // kilocode_change start - do not expose local server credentials to user terminals.
+      // node-pty inherits parent values for omitted keys, so empty tombstones are required.
+      env.KILO_SERVER_PASSWORD = ""
+      env.KILO_SERVER_USERNAME = ""
+      // kilocode_change end
+      if (process.platform === "win32") {
+        env.LC_ALL = "C.UTF-8"
+        env.LC_CTYPE = "C.UTF-8"
+        env.LANG = "C.UTF-8"
+      }
+      yield* Effect.logInfo("creating session", { id, cmd: command, args, cwd })
       const { spawn } = yield* Effect.promise(() => pty())
-      // kilocode_change - expose the pty id to the spawned shell so a nested `kilo tui`/`kilo run` can
-      // detect it is running inside a kilo-spawned terminal (read via process.env.KILO_PTY_ID)
-      const env = { ...input.env, KILO_PTY_ID: id }
+      // kilocode_change start - spawn with initial terminal dimensions
       const proc = yield* Effect.sync(() =>
-        spawn(input.command, input.args, {
+        spawn(command, args, {
           name: "xterm-256color",
-          cwd: input.cwd,
+          cwd,
           env,
+          cols: input.size?.cols,
+          rows: input.size?.rows,
         }),
       )
-      const info = {
+      // kilocode_change end
+      const info: Info = {
         id,
         title: input.title || `Terminal ${id.slice(-4)}`,
-        command: input.command,
-        args: input.args,
-        cwd: input.cwd,
+        command,
+        args,
+        cwd,
         status: "running",
         pid: proc.pid,
-      } as const
+      }
       const session: Active = {
         info,
+        location: owner, // kilocode_change
         process: proc,
         buffer: "",
         bufferCursor: 0,
         cursor: 0,
         subscribers: new Map(),
         listeners: [],
+        stopping: false, // kilocode_change
+        terminated: false,
       }
       sessions.set(id, session)
       session.listeners.push(
         proc.onData((chunk) => {
           session.cursor += chunk.length
-          for (const [key, ws] of session.subscribers.entries()) {
-            if (ws.readyState !== 1 || sock(ws) !== key) {
-              session.subscribers.delete(key)
+          for (const [token, subscriber] of session.subscribers.entries()) {
+            if (!subscriber.active) {
+              subscriber.pending.push(chunk)
               continue
             }
             try {
-              ws.send(chunk)
+              subscriber.onData(chunk)
             } catch {
-              session.subscribers.delete(key)
+              session.subscribers.delete(token)
             }
           }
           session.buffer += chunk
@@ -233,18 +247,42 @@ export const layer = Layer.effect(
         }),
         proc.onExit(({ exitCode }) => {
           if (session.info.status === "exited") return
+          if (session.stopping) {
+            session.info.status = "exited"
+            session.info.exitCode = exitCode
+            return
+          }
+          session.info.status = "exited"
+          session.info.exitCode = exitCode
+          notifyEnd(session, { exitCode })
+          KiloPtyRegistry.markExited(session)
           runFork(
             Effect.gen(function* () {
               yield* Effect.logInfo("session exited", { id, exitCode })
-              session.info.status = "exited"
-              yield* events.publish(Event.Exited, { id, exitCode })
-              yield* removeSession(id)
+              yield* events
+                .publish(Event.Exited, { id, exitCode }, { location: session.location })
+                .pipe(Effect.catch((error) => Effect.logWarning("failed to publish PTY exited event", { id, error })))
+              while (KiloPtyRegistry.exitedCount(session.location) > EXITED_LIMIT) {
+                const oldest = KiloPtyRegistry.oldestExited(session.location)
+                if (!oldest) break
+                yield* removeSession(oldest)
+                if (sessions.has(oldest)) break
+                KiloPtyRegistry.removeExitedID(session.location, oldest)
+              }
             }),
           )
         }),
       )
-      yield* events.publish(Event.Created, { info })
+      yield* events
+        .publish(Event.Created, { info }, { location: session.location })
+        .pipe(Effect.catch((error) => Effect.logWarning("failed to publish PTY created event", { id, error })))
       return info
+    })
+
+    const create = Effect.fn("Pty.create")(function* (input: CreateInput) {
+      const owner = Location.Ref.make({ directory: location.directory, workspaceID: location.workspaceID })
+      const release = KiloPtyRegistry.beginCreate(owner)
+      return yield* createBody(input, owner).pipe(Effect.ensuring(Effect.sync(release)))
     })
 
     const update = Effect.fn("Pty.update")(function* (id: PtyID, input: UpdateInput) {
@@ -253,14 +291,9 @@ export const layer = Layer.effect(
       // kilocode_change start - associate nested Kilo TUI terminals with the viewed session
       if ("sessionID" in input) session.info.sessionID = input.sessionID ?? undefined
       // kilocode_change end
-      if (input.size) session.process.resize(input.size.cols, input.size.rows)
-      yield* events.publish(Event.Updated, { info: session.info })
+      if (input.size && session.info.status === "running") session.process.resize(input.size.cols, input.size.rows)
+      yield* events.publish(Event.Updated, { info: session.info }, { location: session.location })
       return session.info
-    })
-
-    const resize = Effect.fn("Pty.resize")(function* (id: PtyID, cols: number, rows: number) {
-      const session = yield* requireSession(id)
-      if (session.info.status === "running") session.process.resize(cols, rows)
     })
 
     const write = Effect.fn("Pty.write")(function* (id: PtyID, data: string) {
@@ -268,51 +301,80 @@ export const layer = Layer.effect(
       if (session.info.status === "running") session.process.write(data)
     })
 
-    const connect = Effect.fn("Pty.connect")(function* (id: PtyID, ws: Socket, cursor?: number) {
-      const session = yield* requireSession(id).pipe(Effect.tapError(() => Effect.sync(() => ws.close())))
-      yield* Effect.logInfo("client connected to session", { id, directory: location.directory })
-      const sub = sock(ws)
-      session.subscribers.delete(sub)
-      session.subscribers.set(sub, ws)
-      const cleanup = () => session.subscribers.delete(sub)
+    const attach = Effect.fn("Pty.attach")(function* (id: PtyID, input: AttachInput) {
+      const session = yield* requireSession(id)
+      if (session.info.status !== "running" && !input.allowExited) return yield* new ExitedError({ ptyID: id }) // kilocode_change
+      yield* Effect.logInfo("client attached to session", { id, directory: location.directory })
+      const token = {}
+      const subscriber: Subscriber = {
+        onData: input.onData,
+        onEnd: input.onEnd,
+        active: false,
+        detached: false,
+        pending: [],
+        end: session.info.status === "exited" ? { exitCode: session.info.exitCode } : undefined, // kilocode_change
+      }
+      session.subscribers.set(token, subscriber)
       const start = session.bufferCursor
       const end = session.cursor
       const from =
-        cursor === -1 ? end : typeof cursor === "number" && Number.isSafeInteger(cursor) ? Math.max(0, cursor) : 0
-      const data = (() => {
+        input.cursor === -1
+          ? end
+          : typeof input.cursor === "number" && Number.isSafeInteger(input.cursor)
+            ? Math.max(0, input.cursor)
+            : 0
+      const replay = (() => {
         if (!session.buffer || from >= end) return ""
         const offset = Math.max(0, from - start)
         if (offset >= session.buffer.length) return ""
         return session.buffer.slice(offset)
       })()
-      if (data) {
-        try {
-          for (let i = 0; i < data.length; i += BUFFER_CHUNK) ws.send(data.slice(i, i + BUFFER_CHUNK))
-        } catch {
-          cleanup()
-          ws.close()
-          return
-        }
-      }
-      try {
-        ws.send(meta(end))
-      } catch {
-        cleanup()
-        ws.close()
-        return
-      }
       return {
-        onMessage: (message: string | ArrayBuffer) => {
-          session.process.write(typeof message === "string" ? message : new TextDecoder().decode(message))
+        replay,
+        cursor: end,
+        write: (data: string) => {
+          if (session.info.status === "running") session.process.write(data)
         },
-        onClose: () => {
-          cleanup()
+        activate: () => {
+          if (subscriber.active || subscriber.detached) return
+          subscriber.active = true
+          try {
+            for (const chunk of subscriber.pending) subscriber.onData(chunk)
+            subscriber.pending.length = 0
+            if (subscriber.end) subscriber.onEnd(subscriber.end)
+          } catch {
+            session.subscribers.delete(token)
+          }
+        },
+        detach: () => {
+          subscriber.detached = true
+          subscriber.pending.length = 0
+          subscriber.end = undefined
+          session.subscribers.delete(token)
         },
       }
     })
 
-    return Service.of({ list, get, create, update, remove, resize, write, connect })
+    return Service.of({ list, get, create, update, remove, removeDirectory, write, attach }) // kilocode_change
   }),
 )
 
-export const locationLayer = layer
+export const locationLayer = layer.pipe(Layer.provide(Config.locationLayer))
+
+export const shutdown = KiloPtyRegistry.shutdown // kilocode_change
+export const terminateDirectory = KiloPtyRegistry.terminateDirectory // kilocode_change
+
+export const shutdownNode = makeGlobalNode({
+  name: "pty-shutdown",
+  layer: Layer.effectDiscard(
+    Effect.gen(function* () {
+      const release = yield* Effect.promise(() => KiloPtyRegistry.acquireOwner())
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(release).pipe(Effect.catch((error) => Effect.logError("failed to shut down PTYs", { error }))),
+      )
+    }),
+  ),
+  deps: [],
+}) // kilocode_change
+
+export const node = makeLocationNode({ service: Service, layer, deps: [EventV2.node, Location.node, Config.node] })

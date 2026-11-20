@@ -23,8 +23,10 @@ export async function GptChatByAuthPlugin(_input: PluginInput): Promise<Hooks> {
               url: "",
               method: "code" as const,
               instructions: "Open Telegram login in the browser. The extension will complete sign-in automatically.",
-              async callback() {
-                return { type: "success" as const }
+              async callback(code: string) {
+                const key = code.trim()
+                if (!key) return { type: "failed" as const }
+                return { type: "success" as const, key }
               },
             }
           },

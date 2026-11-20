@@ -6,14 +6,20 @@ import { useVSCode } from "../../context/vscode"
 import { useLanguage } from "../../context/language"
 import DeviceAuthCard from "./DeviceAuthCard"
 import { SITE_URL } from "../../../../src/shared/branding"
-import type { ProfileData, DeviceAuthState } from "../../types/messages"
+import type { ProfileData, ProviderUsageData, DeviceAuthState } from "../../types/messages"
+import { ProviderUsageCards } from "./ProviderUsageCards"
 
 export type { ProfileData }
 
 export interface ProfileViewProps {
   profileData: ProfileData | null | undefined
   deviceAuth: DeviceAuthState
+  providerUsage?: ProviderUsageData
+  providerUsageLoading?: boolean
+  providerUsageError?: string
   onLogin: () => void
+  onRequestProviderUsage?: () => void
+  onRefreshProviderUsage?: () => void
 }
 
 const formatBalance = (amount: number): string => {
@@ -24,9 +30,10 @@ const ProfileView: Component<ProfileViewProps> = (props) => {
   const vscode = useVSCode()
   const language = useLanguage()
 
-  // Always fetch fresh profile+balance when navigating to this view
+  // Load current profile and usage when navigating to this view.
   onMount(() => {
     vscode.postMessage({ type: "refreshProfile" })
+    props.onRequestProviderUsage?.()
   })
 
   const handleLogin = () => {
@@ -45,12 +52,37 @@ const ProfileView: Component<ProfileViewProps> = (props) => {
     vscode.postMessage({ type: "openExternal", url: SITE_URL })
   }
 
+  const openExternal = (url: string) => {
+    vscode.postMessage({ type: "openExternal", url })
+  }
+
+  const handleGetPass = () => {
+    vscode.postMessage({ type: "openExternal", url: SITE_URL })
+  }
+
   const handleCancelLogin = () => {
     vscode.postMessage({ type: "cancelLogin" })
   }
 
+  const usage = () => (
+    <ProviderUsageCards
+      data={props.providerUsage}
+      loading={props.providerUsageLoading ?? !props.providerUsage}
+      error={props.providerUsageError}
+      onRefresh={() => props.onRefreshProviderUsage?.()}
+      onOpen={openExternal}
+      kiloPass={props.profileData?.kiloPass}
+      showKiloPass={
+        !!props.profileData &&
+        (props.profileData.currentOrgId ?? null) === null &&
+        props.profileData.profile.hasPersonalAccount !== false
+      }
+      onGetKiloPass={handleGetPass}
+    />
+  )
+
   return (
-    <div style={{ display: "flex", "flex-direction": "column", height: "100%" }}>
+    <div style={{ display: "flex", "flex-direction": "column", height: "100%", "min-height": 0, overflow: "hidden" }}>
       <div
         style={{
           padding: "12px 16px",
@@ -65,7 +97,18 @@ const ProfileView: Component<ProfileViewProps> = (props) => {
         </h2>
       </div>
       <div
-        style={{ padding: "16px", "max-width": "480px", margin: "0 auto", width: "100%", "box-sizing": "border-box" }}
+        data-profile-scroll
+        style={{
+          flex: 1,
+          "min-height": 0,
+          "overflow-y": "auto",
+          "overflow-x": "hidden",
+          padding: "16px",
+          "max-width": "480px",
+          margin: "0 auto",
+          width: "100%",
+          "box-sizing": "border-box",
+        }}
       >
         <Show
           when={props.profileData}
@@ -131,41 +174,37 @@ const ProfileView: Component<ProfileViewProps> = (props) => {
               {/* Balance */}
               <Show when={data().balance}>
                 {(balance) => (
-                  <Card
-                    style={{
-                      display: "flex",
-                      "align-items": "center",
-                      "justify-content": "space-between",
-                    }}
-                  >
-                    <div>
-                      <p
-                        style={{
-                          "font-size": "var(--kilo-font-size-11)",
-                          "text-transform": "uppercase",
-                          "letter-spacing": "0.5px",
-                          color: "var(--vscode-descriptionForeground)",
-                          margin: "0 0 4px 0",
-                        }}
-                      >
-                        {language.t("profile.balance.title")}
-                      </p>
-                      <p
-                        style={{
-                          "font-size": "var(--kilo-font-size-18)",
-                          "font-weight": "600",
-                          color: "var(--vscode-foreground)",
-                          margin: 0,
-                        }}
-                      >
-                        {formatBalance(balance().balance)}
-                      </p>
+                  <Card style={{ display: "flex", "flex-direction": "column", gap: "12px" }}>
+                    <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between" }}>
+                      <div>
+                        <p
+                          style={{
+                            "font-size": "var(--kilo-font-size-11)",
+                            "text-transform": "uppercase",
+                            "letter-spacing": "0.5px",
+                            color: "var(--vscode-descriptionForeground)",
+                            margin: "0 0 4px 0",
+                          }}
+                        >
+                          {language.t("profile.balance.title")}
+                        </p>
+                        <p
+                          style={{
+                            "font-size": "var(--kilo-font-size-18)",
+                            "font-weight": "600",
+                            color: "var(--vscode-foreground)",
+                            margin: 0,
+                          }}
+                        >
+                          {formatBalance(balance().balance)}
+                        </p>
+                      </div>
+                      <Tooltip value={language.t("profile.balance.refresh")} placement="left">
+                        <Button variant="ghost" size="small" onClick={handleRefresh}>
+                          ↻ {language.t("common.refresh")}
+                        </Button>
+                      </Tooltip>
                     </div>
-                    <Tooltip value={language.t("profile.balance.refresh")} placement="left">
-                      <Button variant="ghost" size="small" onClick={handleRefresh}>
-                        ↻ {language.t("common.refresh")}
-                      </Button>
-                    </Tooltip>
                   </Card>
                 )}
               </Show>
@@ -183,9 +222,13 @@ const ProfileView: Component<ProfileViewProps> = (props) => {
                   {language.t("profile.action.logout")}
                 </Button>
               </div>
+
+              {usage()}
             </div>
           )}
         </Show>
+
+        <Show when={!props.profileData}>{usage()}</Show>
       </div>
     </div>
   )

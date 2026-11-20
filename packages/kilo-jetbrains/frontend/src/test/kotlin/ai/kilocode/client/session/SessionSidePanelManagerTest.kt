@@ -9,6 +9,7 @@ import ai.kilocode.client.session.history.HistoryController
 import ai.kilocode.client.session.history.HistoryDataKeys
 import ai.kilocode.client.session.history.HistoryPanel
 import ai.kilocode.client.session.history.LocalHistoryItem
+import ai.kilocode.client.session.controller.SessionController
 import ai.kilocode.client.session.model.Permission
 import ai.kilocode.client.session.model.PermissionMeta
 import ai.kilocode.client.session.model.Question
@@ -19,6 +20,7 @@ import ai.kilocode.client.testing.FakeSessionRpcApi
 import ai.kilocode.client.testing.TestUiTimers
 import ai.kilocode.client.testing.FakeWorkspaceRpcApi
 import ai.kilocode.client.testing.TestCoroutines
+import ai.kilocode.client.testing.pumpEdt
 import ai.kilocode.rpc.dto.ChatEventDto
 import ai.kilocode.rpc.dto.CloudSessionDto
 import ai.kilocode.rpc.dto.KiloAppStateDto
@@ -69,6 +71,10 @@ class SessionSidePanelManagerTest : BasePlatformTestCase() {
             it.state.value = KiloWorkspaceStateDto(KiloWorkspaceStatusDto.READY)
         })
         workspace = workspaces.workspace("/test")
+        // SessionHost schedules inactive panels through this registry key. Tests do not load the
+        // plugin's registryKey extensions, so contribute it for every test before any panel can be
+        // disposed; only the tests that need a specific duration change the value.
+        contributeInactiveDisposeTimeout()
     }
 
     override fun tearDown() {
@@ -85,6 +91,21 @@ class SessionSidePanelManagerTest : BasePlatformTestCase() {
         val provider = manager.component as DataProvider
 
         assertSame(manager, provider.getData(SessionManager.KEY.name))
+    }
+
+    fun `test host empty panel is full recents panel`() {
+        rpc.recent.add(session("ses_recent"))
+        val manager = manager()
+        val controller = controller()
+        settle()
+
+        val panel = manager.emptyPanel(testRootDisposable, controller)
+
+        assertTrue(panel.logoVisible())
+        assertTrue(panel.feedbackVisible())
+        assertTrue(panel.descriptionVisible())
+        assertTrue(panel.historyVisible())
+        assertTrue(panel.recentVisible())
     }
 
     fun `test new session replaces active component`() {
@@ -136,6 +157,19 @@ class SessionSidePanelManagerTest : BasePlatformTestCase() {
         val history = active(manager) as HistoryPanel
 
         assertSame(history.defaultFocusedComponent, manager.defaultFocusedComponent)
+    }
+
+    fun `test history back callback overrides local session fallback`() {
+        val manager = manager()
+        var calls = 0
+
+        manager.newSession()
+        manager.showHistory { calls++ }
+        settle()
+        val history = active(manager) as HistoryPanel
+        history.clickBack()
+
+        assertEquals(1, calls)
     }
 
     fun `test opening same existing session reuses component`() {
@@ -679,6 +713,7 @@ class SessionSidePanelManagerTest : BasePlatformTestCase() {
                 val id = when (ref) {
                     is SessionRef.Local -> ref.id
                     is SessionRef.Cloud -> ref.key
+                    is SessionRef.Hosted -> ref.key
                     null -> null
                 }
                 created.add(workspace.directory to id)
@@ -699,7 +734,7 @@ class SessionSidePanelManagerTest : BasePlatformTestCase() {
                 }
             },
             resolve = { workspaces.workspace(it) },
-            status = { sessions.activity() },
+            status = { sessions.activitySnapshot() },
             history = history,
             timers = timers,
             request = request,
@@ -709,6 +744,15 @@ class SessionSidePanelManagerTest : BasePlatformTestCase() {
     }
 
     private fun active(manager: SessionSidePanelManager) = manager.component.getComponent(0) as JPanel
+
+    private fun controller() = SessionController(
+        parent = testRootDisposable,
+        sessions = sessions,
+        workspace = workspace,
+        app = app,
+        cs = coroutines.scope,
+        timers = timers,
+    )
 
     private fun empty(panel: JPanel): Boolean {
         var empty = false
@@ -723,10 +767,13 @@ class SessionSidePanelManagerTest : BasePlatformTestCase() {
     private fun useLongInactiveDisposeTimeout() = setInactiveDisposeTimeout(60_000)
 
     private fun setInactiveDisposeTimeout(ms: Int) {
-        val key = "kilo.session.inactive.disposeTimeoutMs"
+        Registry.get(INACTIVE_TIMEOUT).setValue(ms, testRootDisposable)
+    }
+
+    private fun contributeInactiveDisposeTimeout() {
         Registry.mutateContributedKeys {
-            it + (key to RegistryKeyDescriptor(
-                key,
+            it + (INACTIVE_TIMEOUT to RegistryKeyDescriptor(
+                INACTIVE_TIMEOUT,
                 "Milliseconds before hidden session UI is disposed after switching away.",
                 "180000",
                 false,
@@ -736,9 +783,8 @@ class SessionSidePanelManagerTest : BasePlatformTestCase() {
             ))
         }
         Disposer.register(testRootDisposable) {
-            Registry.mutateContributedKeys { it - key }
+            Registry.mutateContributedKeys { it - INACTIVE_TIMEOUT }
         }
-        Registry.get(key).setValue(ms, testRootDisposable)
     }
 
     private fun JPanel.controller(): ai.kilocode.client.session.controller.SessionController {
@@ -765,11 +811,7 @@ class SessionSidePanelManagerTest : BasePlatformTestCase() {
 
     private fun settle() = coroutines.drain(::pump)
 
-    private fun pump() {
-        com.intellij.openapi.application.ApplicationManager.getApplication().invokeAndWait {
-            com.intellij.util.ui.UIUtil.dispatchAllInvocationEvents()
-        }
-    }
+    private fun pump() = pumpEdt()
 
     private fun session(id: String) = session(id, "/test")
 
@@ -834,4 +876,7 @@ class SessionSidePanelManagerTest : BasePlatformTestCase() {
         ),
     )
 
+    private companion object {
+        const val INACTIVE_TIMEOUT = "kilo.session.inactive.disposeTimeoutMs"
+    }
 }

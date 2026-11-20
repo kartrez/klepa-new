@@ -1,7 +1,10 @@
 import { describe, it, expect } from "bun:test"
 import {
+  cycleAgent,
   createDraftAgentSeed,
   draftAgentSelection,
+  resolvePromptAgent,
+  resolveScopeAgent,
   resolveSessionAgent,
 } from "../../webview-ui/src/context/session-agent"
 import type { Message } from "../../webview-ui/src/types/messages"
@@ -78,6 +81,118 @@ describe("resolveSessionAgent", () => {
     )
 
     expect(result).toBeUndefined()
+  })
+})
+
+describe("cycleAgent", () => {
+  const agents = [
+    { name: "ask", mode: "primary" },
+    { name: "plan", mode: "primary" },
+    { name: "task", mode: "subagent" },
+    { name: "hidden", mode: "primary", hidden: true },
+    { name: "code", mode: "primary" },
+  ]
+
+  function cycle(current: string, direction: 1 | -1, scope = "pending-1") {
+    const calls: Array<[string, string | undefined]> = []
+    const name = cycleAgent({
+      agents,
+      scope,
+      direction,
+      selected: (id) => {
+        expect(id).toBe(scope)
+        return current
+      },
+      select: (agent, id) => calls.push([agent, id]),
+    })
+    return { name, calls }
+  }
+
+  it("cycles the same pending scope read by the visible selector", () => {
+    expect(cycle("ask", 1)).toEqual({ name: "plan", calls: [["plan", "pending-1"]] })
+    expect(cycle("ask", -1)).toEqual({ name: "code", calls: [["code", "pending-1"]] })
+  })
+
+  it("wraps and starts from the first agent when the selection is unknown", () => {
+    expect(cycle("code", 1).name).toBe("ask")
+    expect(cycle("missing", 1).name).toBe("ask")
+  })
+
+  it("does nothing when there is no alternative", () => {
+    const selected: string[] = []
+    expect(
+      cycleAgent({
+        agents: [{ name: "code" }],
+        direction: 1,
+        selected: () => "code",
+        select: (name) => selected.push(name),
+      }),
+    ).toBeUndefined()
+    expect(selected).toEqual([])
+  })
+})
+
+describe("resolvePromptAgent", () => {
+  it("sends Code after an explicit Ask to Code selection", () => {
+    expect(
+      resolvePromptAgent({
+        sessionID: "ses_1",
+        selections: { ses_1: "code" },
+        pending: "ask",
+      }),
+    ).toBe("code")
+  })
+
+  it("sends an explicit pending Code selection on a new draft", () => {
+    expect(resolvePromptAgent({ selections: {}, pending: "code" })).toBe("code")
+  })
+
+  it("honors an explicit pending selection for a draft scope with no per-session entry", () => {
+    expect(resolvePromptAgent({ sessionID: "draft-1", selections: {}, pending: "ask" })).toBe("ask")
+  })
+
+  it("does not fall back to pending for a real server session with no per-session entry", () => {
+    expect(resolvePromptAgent({ sessionID: "ses_1", selections: {}, pending: "ask" })).toBeUndefined()
+  })
+
+  it("omits the agent when there is no explicit selection", () => {
+    expect(resolvePromptAgent({ sessionID: "ses_1", selections: {}, pending: null })).toBeUndefined()
+    expect(resolvePromptAgent({ selections: {}, pending: null })).toBeUndefined()
+  })
+})
+
+describe("resolveScopeAgent", () => {
+  const fallback = "code"
+
+  it("uses the scope's own selection first", () => {
+    expect(resolveScopeAgent({ id: "ses_1", selections: { ses_1: "plan" }, pending: "ask", fallback })).toBe("plan")
+    expect(
+      resolveScopeAgent({ id: "pending:tab", selections: { "pending:tab": "plan" }, pending: "ask", fallback }),
+    ).toBe("plan")
+  })
+
+  it("resolves drafts and the composer to the pending agent, then the default", () => {
+    for (const id of ["composer", "pending:tab", "sidebar-pending:tab", "4f1c-draft"]) {
+      expect(resolveScopeAgent({ id, selections: {}, pending: "ask", fallback })).toBe("ask")
+      expect(resolveScopeAgent({ id, selections: {}, pending: null, fallback })).toBe(fallback)
+    }
+  })
+
+  it("keeps a real session without a selection on the default agent, never the pending one", () => {
+    expect(resolveScopeAgent({ id: "ses_1", selections: {}, pending: "ask", fallback })).toBe(fallback)
+  })
+
+  it("matches the agent sent with the prompt whenever one is sent", () => {
+    const cases = [
+      { id: "ses_1", selections: { ses_1: "plan" }, pending: "ask" },
+      { id: "pending:tab", selections: {}, pending: "ask" },
+      { id: "composer", selections: {}, pending: "ask" },
+      { id: "ses_2", selections: {}, pending: "ask" },
+    ]
+    for (const input of cases) {
+      const sent = resolvePromptAgent({ sessionID: input.id, selections: input.selections, pending: input.pending })
+      if (sent) expect(resolveScopeAgent({ ...input, fallback })).toBe(sent)
+    }
   })
 })
 

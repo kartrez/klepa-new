@@ -21,6 +21,9 @@ import * as SandboxNetwork from "@/kilocode/sandbox/network" // kilocode_change
 import { run as runSandbox, type Profile } from "@kilocode/sandbox" // kilocode_change
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { MCP } from "@/mcp"
+import type { Tool as MCPToolDef } from "@modelcontextprotocol/sdk/types.js"
+import z from "zod" // kilocode_change
 
 const configLayer = TestConfig.layer({
   directories: () => InstanceState.directory.pipe(Effect.map((dir) => [path.join(dir, ".kilo")])), // kilocode_change
@@ -29,6 +32,8 @@ const configLayer = TestConfig.layer({
 type RegistryLayerOptions = {
   flags?: Partial<RuntimeFlags.Info>
   plugin?: Layer.Layer<Plugin.Service>
+  config?: Parameters<typeof TestConfig.layer>[0] // kilocode_change
+  mcp?: Layer.Layer<MCP.Service>
 }
 
 // Fake Plugin.Service that returns a single plugin whose `tool` map contains
@@ -55,21 +60,153 @@ const brokenPluginLayer = Layer.succeed(
   }),
 )
 
+// kilocode_change start
+// A plugin whose middle tool declares an arg Zod cannot represent in JSON Schema. The
+// conversion throws inside `fromPlugin`; without a per-tool boundary the throw escapes the
+// state constructor and the registry returns no tools at all, which is what took down every
+// prompt in a session.
+const unconvertiblePluginLayer = Layer.succeed(
+  Plugin.Service,
+  Plugin.Service.of({
+    init: () => Effect.void,
+    trigger: ((_name: unknown, _input: unknown, output: unknown) =>
+      Effect.succeed(output)) as Plugin.Interface["trigger"],
+    list: () =>
+      Effect.succeed([
+        {
+          tool: {
+            good_before: {
+              description: "converts fine",
+              args: { path: z.string() },
+              execute: async () => "ok",
+            },
+            unconvertible: {
+              description: "args Zod cannot convert",
+              args: { page: z.instanceof(Object) },
+              execute: async () => "ok",
+            },
+            good_after: {
+              description: "converts fine",
+              args: { pattern: z.string().min(1) },
+              execute: async () => "ok",
+            },
+          },
+        },
+      ]),
+  }),
+)
+// kilocode_change end
+
 const root = LayerNode.group([ToolRegistry.node, Agent.node])
-const registryLayer = (opts: RegistryLayerOptions = {}) =>
-  LayerNode.buildLayer(root, {
-    replacements: [
-      LayerNode.replace(Config.node, configLayer),
-      LayerNode.replace(RuntimeFlags.node, RuntimeFlags.layer(opts.flags ?? {})),
-      ...(opts.plugin ? [LayerNode.replace(Plugin.node, opts.plugin)] : []),
-    ],
-  })
+const registryLayer = (opts: RegistryLayerOptions = {}) => {
+  const replacements = [
+    [Config.node, opts.config ? TestConfig.layer(opts.config) : configLayer], // kilocode_change
+    [RuntimeFlags.node, RuntimeFlags.layer(opts.flags ?? {})],
+  ] as const
+  const extra = [
+    ...(opts.plugin ? ([[Plugin.node, opts.plugin]] as const) : []),
+    ...(opts.mcp ? ([[MCP.node, opts.mcp]] as const) : []),
+  ]
+  return LayerNode.compile(root, [...replacements, ...extra])
+}
 
 const it = testEffect(registryLayer())
 const scout = testEffect(registryLayer({ flags: { experimentalScout: true } })) // kilocode_change
+const contextTools = testEffect(registryLayer({ flags: { experimentalContextTools: true } })) // kilocode_change
 const withBrokenPlugin = testEffect(registryLayer({ plugin: brokenPluginLayer }))
+const withUnconvertiblePlugin = testEffect(registryLayer({ plugin: unconvertiblePluginLayer })) // kilocode_change
 // kilocode_change start
+const websearch = testEffect(
+  registryLayer({
+    config: {
+      get: () =>
+        Effect.succeed({
+          web_search: true,
+          provider: { openai: { options: { apiKey: "test-openai-key" } } },
+        }),
+    },
+  }),
+)
 const sandboxed = testEffect(registryLayer({ flags: { experimentalLspTool: true } }))
+// kilocode_change end
+const withCodeMode = testEffect(
+  registryLayer({
+    flags: { experimentalCodeMode: true },
+    mcp: Layer.mock(MCP.Service, {
+      tools: () =>
+        Effect.succeed({
+          weather_current: {
+            def: {
+              name: "current",
+              description: "current weather",
+              inputSchema: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
+            } as MCPToolDef,
+            client: {} as MCP.McpTool["client"],
+            clientName: "weather", // kilocode_change
+          },
+        }),
+      clients: () => Effect.succeed({ weather: {} as MCP.McpTool["client"] }),
+    }),
+  }),
+)
+const withEmptyCodeMode = testEffect(
+  registryLayer({
+    flags: { experimentalCodeMode: true },
+    mcp: Layer.mock(MCP.Service, {
+      tools: () => Effect.succeed({}),
+      clients: () => Effect.succeed({}),
+    }),
+  }),
+)
+// kilocode_change start - verify the execute catalog is suppressed in restricted sessions
+const withRestrictedCodeMode = testEffect(
+  registryLayer({
+    flags: { experimentalCodeMode: true },
+    config: {
+      get: () => Effect.succeed({ sandbox: { enabled: true, network: "deny" } }),
+    },
+    mcp: Layer.mock(MCP.Service, {
+      tools: () =>
+        Effect.succeed({
+          weather_current: {
+            def: {
+              name: "current",
+              description: "current weather",
+              inputSchema: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
+            } as MCPToolDef,
+            client: {} as MCP.McpTool["client"],
+            clientName: "weather", // kilocode_change
+          },
+        }),
+      clients: () => Effect.succeed({ weather: {} as MCP.McpTool["client"] }),
+    }),
+  }),
+)
+// kilocode_change end
+
+// kilocode_change start - Code Mode can be enabled from the Kilo config instead of the environment flag
+const weatherMcp = Layer.mock(MCP.Service, {
+  tools: () =>
+    Effect.succeed({
+      weather_current: {
+        def: {
+          name: "current",
+          description: "current weather",
+          inputSchema: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
+        } as MCPToolDef,
+        client: {} as MCP.McpTool["client"],
+        clientName: "weather",
+      },
+    }),
+  clients: () => Effect.succeed({ weather: {} as MCP.McpTool["client"] }),
+})
+const withConfigCodeMode = testEffect(
+  registryLayer({
+    config: { get: () => Effect.succeed({ experimental: { code_mode: true } }) },
+    mcp: weatherMcp,
+  }),
+)
+const withoutCodeMode = testEffect(registryLayer({ mcp: weatherMcp }))
 // kilocode_change end
 
 afterEach(async () => {
@@ -88,6 +225,38 @@ function sandboxProfile(): Profile {
 
 describe("tool.registry", () => {
   // kilocode_change start
+  it.instance("hides websearch for a third-party provider by default", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const agent = yield* Agent.Service
+      const build = yield* agent.get("build")
+      if (!build) return yield* Effect.die(new Error("build agent not found"))
+      const tools = yield* registry.tools({
+        providerID: ProviderV2.ID.openai,
+        modelID: ModelV2.ID.make("test"),
+        agent: build,
+      })
+
+      expect(tools.map((tool) => tool.id)).not.toContain("websearch")
+    }),
+  )
+
+  websearch.instance("shows websearch for a configured third-party provider when enabled", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const agent = yield* Agent.Service
+      const build = yield* agent.get("build")
+      if (!build) return yield* Effect.die(new Error("build agent not found"))
+      const tools = yield* registry.tools({
+        providerID: ProviderV2.ID.openai,
+        modelID: ModelV2.ID.make("test"),
+        agent: build,
+      })
+
+      expect(tools.map((tool) => tool.id)).toContain("websearch")
+    }),
+  )
+
   sandboxed.instance("preserves built-in network classification through production tool definition processing", () =>
     Effect.gen(function* () {
       const registry = yield* ToolRegistry.Service
@@ -138,6 +307,28 @@ describe("tool.registry", () => {
     }),
   )
 
+  // kilocode_change start - self-context tools stay behind the experimental flag
+  it.instance("hides the self-context tools unless experimental", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const ids = yield* registry.ids()
+
+      expect(ids).not.toContain("get_context_info")
+      expect(ids).not.toContain("compact")
+    }),
+  )
+
+  contextTools.instance("shows the self-context tools when experimental context tools are enabled", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const ids = yield* registry.ids()
+
+      expect(ids).toContain("get_context_info")
+      expect(ids).toContain("compact")
+    }),
+  )
+  // kilocode_change end
+
   it.instance("does not expose task_status", () =>
     Effect.gen(function* () {
       const registry = yield* ToolRegistry.Service
@@ -147,7 +338,108 @@ describe("tool.registry", () => {
     }),
   )
 
-  it.instance("hides task background parameter unless experimental background subagents are enabled", () =>
+  // kilocode_change start - the CLI can schedule and cancel its own future wakeups
+  it.instance("exposes the scheduled wakeup tools", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const ids = yield* registry.ids()
+
+      expect(ids).toContain("schedule_wakeup")
+      expect(ids).toContain("cancel_wakeup")
+    }),
+  )
+  // kilocode_change end
+
+  it.instance("does not expose execute unless code mode is enabled", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const ids = yield* registry.ids()
+
+      expect(ids).not.toContain("execute")
+    }),
+  )
+
+  withCodeMode.instance("exposes execute when code mode is enabled", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      const ids = yield* registry.ids()
+      const tools = yield* registry.tools({
+        providerID: ProviderV2.ID.opencode,
+        modelID: ModelV2.ID.make("test"),
+        agent: yield* agents.defaultInfo(),
+      })
+      const execute = tools.find((tool) => tool.id === "execute")
+
+      expect(ids).toContain("execute")
+      expect(tools.map((tool) => tool.id)).toContain("execute")
+      expect(execute?.description).toContain("tools.weather.current(input: {\n  city: string,\n})")
+    }),
+  )
+
+  withEmptyCodeMode.instance("does not expose execute when code mode has no visible tools", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      const tools = yield* registry.tools({
+        providerID: ProviderV2.ID.opencode,
+        modelID: ModelV2.ID.make("test"),
+        agent: yield* agents.defaultInfo(),
+      })
+
+      expect(tools.map((tool) => tool.id)).not.toContain("execute")
+    }),
+  )
+
+  // kilocode_change start
+  withRestrictedCodeMode.instance("does not advertise code mode in a network-restricted session", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      const tools = yield* registry.tools({
+        providerID: ProviderV2.ID.opencode,
+        modelID: ModelV2.ID.make("test"),
+        agent: yield* agents.defaultInfo(),
+        networkRestricted: true,
+      })
+
+      expect(tools.map((tool) => tool.id)).not.toContain("execute")
+    }),
+  )
+  // kilocode_change end
+
+  // kilocode_change start - the Kilo config toggle enables Code Mode without the environment flag
+  withConfigCodeMode.instance("exposes execute when experimental.code_mode is true in the Kilo config", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      const tools = yield* registry.tools({
+        providerID: ProviderV2.ID.opencode,
+        modelID: ModelV2.ID.make("test"),
+        agent: yield* agents.defaultInfo(),
+      })
+
+      expect(tools.map((tool) => tool.id)).toContain("execute")
+    }),
+  )
+
+  withoutCodeMode.instance("does not expose execute when the config toggle is absent", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const agents = yield* Agent.Service
+      const tools = yield* registry.tools({
+        providerID: ProviderV2.ID.opencode,
+        modelID: ModelV2.ID.make("test"),
+        agent: yield* agents.defaultInfo(),
+      })
+
+      expect(tools.map((tool) => tool.id)).not.toContain("execute")
+    }),
+  )
+  // kilocode_change end
+
+  // kilocode_change start - background task parameters are available by default
+  it.instance("exposes the task background parameter by default", () =>
     Effect.gen(function* () {
       const registry = yield* ToolRegistry.Service
       const agent = yield* Agent.Service
@@ -159,10 +451,12 @@ describe("tool.registry", () => {
         agent: build,
       })).find((tool) => tool.id === "task")
 
-      expect(task?.jsonSchema).toBeDefined()
-      expect((task?.jsonSchema?.properties as Record<string, unknown> | undefined)?.background).toBeUndefined()
+      if (!task) throw new Error("task tool not found")
+      const jsonSchema = ToolJsonSchema.fromTool(task)
+      expect((jsonSchema.properties as Record<string, unknown> | undefined)?.background).toBeDefined()
     }),
   )
+  // kilocode_change end
 
   it.instance("loads tools from .kilo/tool (singular)" /* kilocode_change */, () =>
     Effect.gen(function* () {
@@ -268,6 +562,19 @@ describe("tool.registry", () => {
       expect(ids).toContain("broken_plugin_tool")
     }),
   )
+
+  // kilocode_change start
+  withUnconvertiblePlugin.instance("skips a plugin tool whose schema cannot be converted", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const ids = yield* registry.ids()
+      expect(ids).toContain("good_before")
+      expect(ids).toContain("good_after")
+      expect(ids).toContain("read")
+      expect(ids).not.toContain("unconvertible")
+    }),
+  )
+  // kilocode_change end
 
   it.instance("loads tools from .kilo/tools (plural)" /* kilocode_change */, () =>
     Effect.gen(function* () {

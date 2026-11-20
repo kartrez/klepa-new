@@ -3,17 +3,21 @@
 package ai.kilocode.client.session.views
 
 import ai.kilocode.client.plugin.KiloBundle
+import ai.kilocode.client.plugin.KiloPluginSettings
 import ai.kilocode.client.session.SessionFileOpener
 import ai.kilocode.client.session.openSessionLink
 import ai.kilocode.client.session.model.Content
 import ai.kilocode.client.session.model.Reasoning
+import ai.kilocode.client.session.settings.ReasoningDisplay
+import ai.kilocode.client.session.settings.TranscriptDisplay
+import ai.kilocode.client.session.settings.TranscriptDisplayTarget
 import ai.kilocode.client.session.ui.popup.HeaderPopupBody
 import ai.kilocode.client.session.ui.popup.HeaderPopupRequest
 import ai.kilocode.client.session.ui.style.SessionEditorStyle
 import ai.kilocode.client.session.ui.selection.SessionSelection
 import ai.kilocode.client.session.ui.style.SessionUiStyle
-import ai.kilocode.client.session.views.base.SecondarySessionPartView
-import ai.kilocode.client.telemetry.Telemetry
+import ai.kilocode.client.session.views.base.AbstractSessionPartView
+import ai.kilocode.client.session.views.base.PartHeader
 import ai.kilocode.client.ui.UiStyle
 import ai.kilocode.client.ui.md.MdView
 import ai.kilocode.client.ui.md.MdViewFactory
@@ -31,19 +35,36 @@ import javax.swing.ScrollPaneConstants
 import javax.swing.Scrollable
 import javax.swing.SwingUtilities
 
-/** Renders reasoning as a secondary collapsible block. */
+/**
+ * Renders reasoning as a secondary collapsible block. Behavior is driven by the configured
+ * [ReasoningDisplay] mode (Transcript settings):
+ * - [ReasoningDisplay.EXPANDED]: opens whenever content is non-blank, full height, never
+ *   auto-collapses.
+ * - [ReasoningDisplay.PREVIEW]: opens while streaming in a height-capped auto-scrolling body,
+ *   auto-collapses and releases its body when the block finishes.
+ * - [ReasoningDisplay.HEADLINE]: never auto-opens; header only until the user expands it.
+ *
+ * Auto-opening is gated by [live]: a block only opens itself while its turn is the actively
+ * streaming (non-settled) turn in a visible transcript. History load, transcript rebuilds, and
+ * background catch-up leave every block collapsed; only a live block in the active turn opens.
+ * A manual user toggle marks the base view as touched and always overrides later automatic changes.
+ */
 class ReasoningView(
     reasoning: Reasoning,
     private val openFile: SessionFileOpener = { _, _ -> },
     private val openUrl: (String) -> Unit = {},
     private val selection: SessionSelection? = null,
     private val parts: ReasoningParts = reasoningParts(selection),
+    private var mode: ReasoningDisplay = KiloPluginSettings.getReasoningDisplay(),
+    /** Whether this block may auto-open from the display setting: a live block in a visible turn. */
+    private val live: () -> Boolean = { true },
 ) :
-    SecondarySessionPartView(
+    AbstractSessionPartView(
         parts.header,
         { parts.scroll(openFile, openUrl) },
-        expanded = reasoning.content.isNotBlank() && !reasoning.done,
-    ) {
+        expanded = initialExpanded(mode, reasoning) && live(),
+        compact = true,
+    ), TranscriptDisplayTarget {
 
     override val contentId: String = reasoning.id
 
@@ -66,17 +87,9 @@ class ReasoningView(
     private var done = reasoning.done
     private var registered = false
     private var following = false
-    private var pinned = false
-
     init {
-        row.border = JBUI.Borders.empty(
-            JBUI.scale(SessionUiStyle.View.Reasoning.HEADER_VERTICAL_PADDING),
-            JBUI.scale(SessionUiStyle.View.Layout.HORIZONTAL_PADDING),
-        )
-        bindHeader(parts.title, parts.icon)
         applyStyle(style)
         if (bodyVisible()) syncBody()
-        syncBorder()
         sync()
     }
 
@@ -84,17 +97,8 @@ class ReasoningView(
     override fun expand(): Boolean {
         val changed = super.expand()
         if (!changed) return false
-        syncBorder()
         syncBody()
         applyBodyStyle()
-        return true
-    }
-
-    @RequiresEdt
-    override fun collapse(): Boolean {
-        val changed = super.collapse()
-        if (!changed) return false
-        syncBorder()
         return true
     }
 
@@ -117,7 +121,7 @@ class ReasoningView(
             }
             changed = true
         }
-        if (finishing && !pinned) {
+        if (finishing && !touched && mode == ReasoningDisplay.PREVIEW) {
             changed = collapse() || changed
             changed = releaseBody() || changed
         }
@@ -134,11 +138,6 @@ class ReasoningView(
         parts.reset()
         registered = false
         return detached
-    }
-
-    @RequiresEdt
-    override fun userToggled() {
-        pinned = true
     }
 
     @RequiresEdt
@@ -159,6 +158,8 @@ class ReasoningView(
     @RequiresEdt
     fun hasToggle(): Boolean = arrow.isVisible
     @RequiresEdt
+    internal fun arrowIcon() = arrow.icon
+    @RequiresEdt
     fun headerText(): String = parts.title.text
     @RequiresEdt
     internal fun headerFont() = parts.title.font
@@ -176,13 +177,8 @@ class ReasoningView(
     internal fun bodyScrollBottom() = parts.scrollOrNull?.verticalScrollBar?.let { it.maximum - it.visibleAmount } ?: 0
 
     @RequiresEdt
-    override fun headerPopup(): HeaderPopupRequest? {
-        if (isExpanded()) return null
-        val text = source.takeIf { it.isNotBlank() } ?: return null
-        return HeaderPopupRequest(row, build = { buildPopupBody(text) }) {
-            Telemetry.send("Header Popup Shown", mapOf("surface" to "session", "part" to "reasoning"))
-        }
-    }
+    override fun headerPopup(): HeaderPopupRequest? =
+        popup("part", "reasoning", source.isNotBlank()) { buildPopupBody(source) }
 
     @RequiresEdt
     override fun applyStyle(style: SessionEditorStyle) {
@@ -199,8 +195,8 @@ class ReasoningView(
     @RequiresEdt
     override fun getPreferredSize(): Dimension {
         val size = super.getPreferredSize()
-        if (!bodyVisible()) return size
-        val height = row.preferredSize.height + bodyMaxHeight()
+        if (!bodyVisible() || mode != ReasoningDisplay.PREVIEW) return size
+        val height = row.preferredSize.height + expandedGap() + bodyMaxHeight()
         return Dimension(size.width, minOf(size.height, height))
     }
 
@@ -214,25 +210,32 @@ class ReasoningView(
             changed = true
         }
         changed = syncExpandable(canExpand()) || changed
-        if (visible && !done && !parts.bodyCreated()) {
+        if (!touched && live() && opens(mode, visible, done) && !isExpanded()) {
             changed = expand() || changed
             changed = syncExpandable(canExpand()) || changed
         }
         return changed
     }
 
-    private fun syncBorder() {
-        if (isExpanded()) {
-            border = JBUI.Borders.customLine(
-                SessionUiStyle.View.Outline.color(),
-                0,
-                SessionUiStyle.View.Outline.width(),
-                0,
-                0,
-            )
-            return
+    @RequiresEdt
+    override fun syncTranscriptDisplay(display: TranscriptDisplay, force: Boolean): Boolean {
+        if (!force && touched) return false
+        val next = display.reasoning
+        if (mode == next) return false
+        mode = next
+        val visible = source.isNotBlank()
+        if (opens(mode, visible, done)) {
+            expand()
+        } else {
+            collapse()
+            releaseBody()
         }
-        border = JBUI.Borders.empty(0, 1, 0, 0)
+        syncExpandable(canExpand())
+        // Expanded and Preview are both open and differ only in measured height (full text vs capped
+        // rows), so nothing here changes containment to invalidate the card. Without this the parent
+        // SessionLayout keeps serving the height it cached while the card still reported isValid.
+        refresh()
+        return true
     }
 
     private fun apply(md: MdView): Boolean {
@@ -242,8 +245,8 @@ class ReasoningView(
         md.font = font
         changed = md.codeFont != style.editorFamily || changed
         md.codeFont = style.editorFamily
-        changed = md.foreground.rgb != UiStyle.Colors.weak().rgb || changed
-        md.foreground = UiStyle.Colors.weak()
+        changed = md.foreground.rgb != SessionUiStyle.Text.Secondary.foreground().rgb || changed
+        md.foreground = SessionUiStyle.Text.Secondary.foreground()
         return changed
     }
 
@@ -277,28 +280,22 @@ class ReasoningView(
         md.applyStyle(style)
         md.font = style.smallEditorFont.deriveFont(Font.ITALIC)
         md.codeFont = style.editorFamily
-        md.foreground = UiStyle.Colors.weak()
-        md.background = style.editorBackground
+        md.foreground = SessionUiStyle.Text.Secondary.foreground()
+        md.background = SessionUiStyle.Colors.codeBlockBackground()
         md.component.border = JBUI.Borders.empty()
         md.set(text)
+        // The shared popup wrapper (HeaderPopupBody) provides the scroll pane, so pass the content
+        // panel directly instead of nesting a second scroll pane here.
         val panel = TrackPanel().apply {
             isOpaque = true
-            background = style.editorBackground
+            background = SessionUiStyle.Colors.codeBlockBackground()
             border = JBUI.Borders.empty(
                 JBUI.scale(SessionUiStyle.View.Reasoning.BODY_VERTICAL_PADDING),
                 JBUI.scale(SessionUiStyle.View.Reasoning.BODY_HORIZONTAL_PADDING),
             )
             add(md.component, BorderLayout.CENTER)
         }
-        val scroll = JBScrollPane(panel).apply {
-            border = JBUI.Borders.empty()
-            isOpaque = true
-            background = style.editorBackground
-            viewport.background = style.editorBackground
-            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
-            verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
-        }
-        return HeaderPopupBody(scroll, md, style.editorBackground)
+        return HeaderPopupBody(panel, md, SessionUiStyle.Colors.codeBlockBackground())
     }
 
     private fun bodyMaxHeight(): Int {
@@ -336,7 +333,7 @@ class ReasoningView(
 }
 
 class ReasoningParts(
-    val header: JPanel,
+    val header: PartHeader,
     val title: JBLabel,
     val icon: JBLabel,
     private val selection: SessionSelection?,
@@ -363,7 +360,7 @@ class ReasoningParts(
         }
         val panel = TrackPanel().apply {
             isOpaque = true
-            background = SessionUiStyle.View.Surface.bgColor()
+            background = SessionUiStyle.Colors.codeBlockBackground()
             border = JBUI.Borders.empty(
                 JBUI.scale(SessionUiStyle.View.Reasoning.BODY_VERTICAL_PADDING),
                 JBUI.scale(SessionUiStyle.View.Reasoning.BODY_HORIZONTAL_PADDING),
@@ -373,8 +370,8 @@ class ReasoningParts(
         val scroll = JBScrollPane(panel).apply {
             border = JBUI.Borders.empty()
             isOpaque = true
-            background = SessionUiStyle.View.Surface.bgColor()
-            viewport.background = SessionUiStyle.View.Surface.bgColor()
+            background = SessionUiStyle.Colors.codeBlockBackground()
+            viewport.background = SessionUiStyle.Colors.codeBlockBackground()
             horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
             verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
         }
@@ -388,13 +385,27 @@ class ReasoningBody(
     val scroll: JBScrollPane,
 )
 
+/** Whether a freshly constructed [ReasoningView] should start expanded, given [mode] and [reasoning]. */
+private fun initialExpanded(mode: ReasoningDisplay, reasoning: Reasoning): Boolean {
+    val visible = reasoning.content.isNotBlank()
+    return opens(mode, visible, reasoning.done)
+}
+
+/** The single mode rule used for both initial state and later automatic expansion. */
+private fun opens(mode: ReasoningDisplay, visible: Boolean, done: Boolean): Boolean {
+    return when (mode) {
+        ReasoningDisplay.EXPANDED -> visible
+        ReasoningDisplay.PREVIEW -> visible && !done
+        ReasoningDisplay.HEADLINE -> false
+    }
+}
+
 private fun reasoningParts(selection: SessionSelection? = null): ReasoningParts {
-    val title = JBLabel(KiloBundle.message("session.part.reasoning")).apply { foreground = UiStyle.Colors.weak() }
-    val icon = JBLabel(SessionViewIcons.brain).apply { foreground = UiStyle.Colors.weak() }
-    val header = JPanel(BorderLayout(JBUI.scale(SessionUiStyle.View.Layout.GAP), 0)).apply {
-        isOpaque = false
-        add(icon, BorderLayout.WEST)
-        add(title, BorderLayout.CENTER)
+    val title = JBLabel(KiloBundle.message("session.part.reasoning")).apply { foreground = SessionUiStyle.Text.Secondary.foreground() }
+    val icon = JBLabel(SessionViewIcons.brain).apply { foreground = SessionUiStyle.Text.Secondary.foreground() }
+    val header = PartHeader().apply {
+        leading(icon)
+        left(title)
     }
     return ReasoningParts(header, title, icon, selection)
 }

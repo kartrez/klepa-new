@@ -10,13 +10,19 @@ import ai.kilocode.rpc.KiloAgentBehaviorRpcApi
 import ai.kilocode.rpc.dto.AgentCreateDto
 import ai.kilocode.rpc.dto.AgentDetailDto
 import ai.kilocode.jetbrains.api.model.AgentBuilderSaveRequest
+import ai.kilocode.rpc.dto.CommandFileDto
 import ai.kilocode.rpc.dto.ConfigPatchDto
+import ai.kilocode.rpc.dto.McpAuthEventDto
+import ai.kilocode.rpc.dto.McpAuthResultDto
 import ai.kilocode.rpc.dto.McpConfigDto
 import ai.kilocode.rpc.dto.McpServerConfigDto
 import ai.kilocode.rpc.dto.PermissionRuleItemDto
 import ai.kilocode.rpc.dto.SkillDto
 import com.intellij.openapi.components.service
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.trySendBlocking
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -39,6 +45,15 @@ class KiloAgentBehaviorRpcApiImpl(private val backend: KiloBackendAppService? = 
         private val saved = ConcurrentHashMap<String, SavedMcp>()
         private val port = AtomicInteger(-1)
         private val extensions = setOf("md", "markdown", "txt", "text", "html", "htm")
+        private const val BROWSER_OPEN_FAILED = "mcp.browser.open.failed"
+        private const val AUTH_URL = "mcp.auth.url"
+
+        /**
+         * Asks the CLI to hand the authorization URL back over SSE instead of opening a browser
+         * itself. In split mode the CLI runs on the host while the user sits at the client, so only
+         * the client can open a usable browser.
+         */
+        private val AUTH_EXTERNAL = JsonObject(mapOf("external" to JsonPrimitive(true)))
     }
 
     private val app: KiloBackendAppService get() = backend ?: service()
@@ -75,7 +90,7 @@ class KiloAgentBehaviorRpcApiImpl(private val backend: KiloBackendAppService? = 
 
     override suspend fun reloadSkills(directory: String): Boolean {
         LOG.info("Skills reload requested dir=$directory")
-        if (hasActiveSession(directory)) {
+        if (hasActiveSession(directory, "Skills")) {
             LOG.warn("Skills reload blocked by active session dir=$directory")
             return false
         }
@@ -136,6 +151,45 @@ class KiloAgentBehaviorRpcApiImpl(private val backend: KiloBackendAppService? = 
 
     override suspend fun commands(directory: String) = KiloCliDataParser.parseAgentBehaviorCommands(request(directory, "/command", null))
 
+    override suspend fun commandFiles(directory: String): List<CommandFileDto> =
+        KiloCliDataParser.parseAgentBehaviorCommandFiles(request(directory, "/kilocode/command/files", null))
+
+    override suspend fun removeCommand(directory: String, location: String): Boolean =
+        post(directory, "/kilocode/command/remove", JsonObject(mapOf("location" to JsonPrimitive(location))))
+
+    override suspend fun reloadCommands(directory: String): Boolean {
+        LOG.info("Commands reload requested dir=$directory")
+        if (hasActiveSession(directory, "Commands")) {
+            LOG.warn("Commands reload blocked by active session dir=$directory")
+            return false
+        }
+        runCatching { post(directory, "/instance/reload") }.onFailure { err ->
+            LOG.warn("Commands reload failed dir=$directory", err)
+        }.getOrThrow()
+        LOG.info("Commands reload succeeded dir=$directory")
+        return true
+    }
+
+    override suspend fun saveCommands(directory: String, edits: Map<String, String>): Boolean {
+        LOG.info("Commands save requested dir=$directory count=${edits.size}")
+        app.requireReady()
+        val known = knownCommands(directory)
+        val roots = commandRoots(directory)
+        val paths = edits.map { (location, content) ->
+            val path = writableCommandPath(directory, location, known, roots) ?: return false
+            path to content
+        }
+        withContext(Dispatchers.IO) {
+            for ((path, content) in paths) {
+                Files.createDirectories(path.parent)
+                Files.writeString(path, content, StandardCharsets.UTF_8)
+            }
+        }
+        LOG.info("Command files saved dir=$directory count=${paths.size}")
+        LOG.info("Commands save reload deferred dir=$directory count=${paths.size}")
+        return true
+    }
+
     override suspend fun mcpStatus(directory: String) = KiloCliDataParser.parseMcpStatus(request(directory, "/mcp", null)).also { items ->
         LOG.info("MCP status returned dir=$directory count=${items.size}")
     }
@@ -163,12 +217,8 @@ class KiloAgentBehaviorRpcApiImpl(private val backend: KiloBackendAppService? = 
 
     override suspend fun saveMcp(directory: String, name: String, scope: String, config: McpConfigDto?): Boolean {
         app.requireReady()
-        val patch = ConfigPatchDto(mcp = mapOf(name to config))
-        if (scope == "workspace") {
-            patchConfig("/config?directory=${encode(directory)}", KiloCliDataParser.buildConfigPatch(patch))
-        } else {
-            app.updateConfig(patch)
-        }
+        val patch = KiloCliDataParser.buildMcpOverlayPatch(name, scope, config)
+        patchConfig("/config/overlay?directory=${encode(directory)}", patch)
         saveMcpOverride(directory, name, scope, config)
         return true
     }
@@ -177,8 +227,45 @@ class KiloAgentBehaviorRpcApiImpl(private val backend: KiloBackendAppService? = 
 
     override suspend fun mcpDisconnect(directory: String, name: String): Boolean = post(directory, "/mcp/${encodePath(name)}/disconnect")
 
-    override suspend fun mcpAuthenticate(directory: String, name: String): Boolean =
-        post(directory, "/mcp/${encodePath(name)}/auth/authenticate")
+    override suspend fun mcpAuthenticate(directory: String, name: String): McpAuthResultDto {
+        val reply = send(directory, "/mcp/${encodePath(name)}/auth/authenticate", "POST", AUTH_EXTERNAL)
+        val result = KiloCliDataParser.parseMcpAuthResult(reply.code, reply.body)
+        // The CLI failure reason identifies why sign-in was rejected; without it the next
+        // "auth keeps resetting" report cannot be diagnosed. It is only meaningful on a
+        // non-success status, so it is logged just for that case to avoid noise on every sign-in.
+        if (result.status == "connected" || result.status == "cancelled") {
+            LOG.info("MCP auth dir=$directory name=$name http=${reply.code} status=${result.status}")
+        } else {
+            LOG.warn("MCP auth dir=$directory name=$name http=${reply.code} status=${result.status} reason=${result.error}")
+        }
+        return result
+    }
+
+    override suspend fun mcpAuthCancel(directory: String, name: String): Boolean {
+        val reply = send(directory, "/mcp/${encodePath(name)}/auth/cancel", "POST")
+        LOG.info("MCP auth cancel dir=$directory name=$name http=${reply.code}")
+        return reply.code in 200..299
+    }
+
+    override suspend fun mcpAuthRemove(directory: String, name: String): Boolean {
+        val reply = send(directory, "/mcp/${encodePath(name)}/auth", "DELETE")
+        LOG.info("MCP auth remove dir=$directory name=$name http=${reply.code}")
+        return reply.code in 200..299
+    }
+
+    override suspend fun mcpAuthEvents(): Flow<McpAuthEventDto> = channelFlow {
+        app.events.collect { event ->
+            val type = if (event.type == AUTH_URL || event.type == BROWSER_OPEN_FAILED) {
+                event.type
+            } else {
+                KiloCliDataParser.extractEventType(event.data)
+            }
+            if (type != AUTH_URL && type != BROWSER_OPEN_FAILED) return@collect
+            val dto = KiloCliDataParser.parseMcpAuthEvent(event.data, external = type == AUTH_URL) ?: return@collect
+            LOG.info("MCP auth url event name=${dto.name} type=$type")
+            trySendBlocking(dto)
+        }
+    }
 
     override suspend fun claudeCodeCompat(): Boolean = KiloClaudeCompatSettings.get()
 
@@ -193,24 +280,24 @@ class KiloAgentBehaviorRpcApiImpl(private val backend: KiloBackendAppService? = 
         return true
     }
 
-    private fun hasActiveSession(directory: String): Boolean {
+    private fun hasActiveSession(directory: String, label: String): Boolean {
         val active = app.sessions.statuses.value.filterValues { it.type != "idle" }
         if (active.isNotEmpty()) {
-            LOG.info("Skills reload active statuses dir=$directory count=${active.size} types=${active.values.map { it.type }.distinct()}")
+            LOG.info("$label reload active statuses dir=$directory count=${active.size} types=${active.values.map { it.type }.distinct()}")
             return true
         }
         val permissions = runCatching { app.chat.pendingPermissions(directory) }.onFailure { err ->
-            LOG.warn("Skills reload pending permission check failed dir=$directory", err)
+            LOG.warn("$label reload pending permission check failed dir=$directory", err)
         }.getOrDefault(emptyList())
         if (permissions.isNotEmpty()) {
-            LOG.info("Skills reload pending permissions dir=$directory count=${permissions.size}")
+            LOG.info("$label reload pending permissions dir=$directory count=${permissions.size}")
             return true
         }
         val questions = runCatching { app.chat.pendingQuestions(directory) }.onFailure { err ->
-            LOG.warn("Skills reload pending question check failed dir=$directory", err)
+            LOG.warn("$label reload pending question check failed dir=$directory", err)
         }.getOrDefault(emptyList())
         if (questions.isNotEmpty()) {
-            LOG.info("Skills reload pending questions dir=$directory count=${questions.size}")
+            LOG.info("$label reload pending questions dir=$directory count=${questions.size}")
             return true
         }
         return false
@@ -238,6 +325,11 @@ class KiloAgentBehaviorRpcApiImpl(private val backend: KiloBackendAppService? = 
         return items.mapNotNull { item -> resolveEditablePath(item) }.toSet()
     }
 
+    private suspend fun knownCommands(directory: String): Set<Path> {
+        val items = commandFiles(directory)
+        return items.mapNotNull { item -> resolveEditableCommandPath(item) }.toSet()
+    }
+
     private fun writablePath(directory: String, location: String, known: Set<Path>): Path? {
         val path = resolveSkillPath(location)
         if (path == null) {
@@ -251,10 +343,26 @@ class KiloAgentBehaviorRpcApiImpl(private val backend: KiloBackendAppService? = 
         return path
     }
 
+    private fun writableCommandPath(directory: String, location: String, known: Set<Path>, roots: Set<Path>): Path? {
+        val path = resolveCommandPath(location)
+        if (path == null) {
+            LOG.warn("Command save rejected: invalid location dir=$directory location=$location")
+            return null
+        }
+        if (path in known || newCommandPath(path, roots)) return path
+        LOG.warn("Command save rejected: unknown command dir=$directory path=$path")
+        return null
+    }
+
     private fun resolveEditablePath(skill: SkillDto): Path? {
         val path = resolveSkillPath(skill.location) ?: return null
         if (urlCached(path)) return null
         return path
+    }
+
+    private fun resolveEditableCommandPath(command: CommandFileDto): Path? {
+        if (!command.editable) return null
+        return resolveCommandPath(command.location)
     }
 
     private fun resolveSkillPath(location: String): Path? {
@@ -266,6 +374,59 @@ class KiloAgentBehaviorRpcApiImpl(private val backend: KiloBackendAppService? = 
         }
         if (!path.isAbsolute || !isSkillFile(path)) return null
         return path
+    }
+
+    private fun resolveCommandPath(location: String): Path? {
+        val raw = normalizeWorkspacePath(location) ?: return null
+        val path = try {
+            Path.of(raw).normalize()
+        } catch (_: InvalidPathException) {
+            return null
+        }
+        if (!path.isAbsolute || path.fileName?.toString()?.endsWith(".md") != true) return null
+        return path
+    }
+
+    private suspend fun commandRoots(directory: String): Set<Path> = buildSet {
+        addProjectCommandRoots(this, directory)
+        val paths = runCatching { request(directory, "/path", null) }.getOrNull()
+        val config = paths?.let(KiloCliDataParser::parsePathConfig)
+        if (config != null) addConfigCommandRoots(this, config)
+        val home = paths?.let(KiloCliDataParser::parsePathHome)
+        if (home != null) addHomeCommandRoots(this, home)
+    }
+
+    private fun addProjectCommandRoots(roots: MutableSet<Path>, dir: String) {
+        val base = try {
+            Path.of(dir).normalize()
+        } catch (_: InvalidPathException) {
+            return
+        }
+        for (cfg in listOf(".kilo", ".kilocode")) {
+            for (name in listOf("command", "commands")) roots.add(base.resolve(cfg).resolve(name).normalize())
+        }
+    }
+
+    private fun addConfigCommandRoots(roots: MutableSet<Path>, dir: String) {
+        val base = try {
+            Path.of(dir).normalize()
+        } catch (_: InvalidPathException) {
+            return
+        }
+        for (name in listOf("command", "commands")) roots.add(base.resolve(name).normalize())
+    }
+
+    private fun addHomeCommandRoots(roots: MutableSet<Path>, home: String) {
+        val base = try {
+            Path.of(home).normalize()
+        } catch (_: InvalidPathException) {
+            return
+        }
+        for (cfg in listOf(".kilo", ".kilocode")) addConfigCommandRoots(roots, base.resolve(cfg).toString())
+    }
+
+    private fun newCommandPath(path: Path, roots: Set<Path>): Boolean {
+        return roots.any { root -> path.startsWith(root) }
     }
 
     private fun urlCached(path: Path): Boolean {
@@ -303,6 +464,26 @@ class KiloAgentBehaviorRpcApiImpl(private val backend: KiloBackendAppService? = 
         }
     }
 
+    private data class Reply(val code: Int, val body: String)
+
+    private suspend fun send(
+        directory: String,
+        path: String,
+        method: String,
+        body: JsonObject = JsonObject(emptyMap()),
+    ): Reply = withContext(Dispatchers.IO) {
+        val http = app.http ?: throw IllegalStateException("Kilo HTTP client is unavailable")
+        val url = "http://127.0.0.1:${app.port}$path?directory=${encode(directory)}"
+        val builder = Request.Builder().url(url)
+        when (method) {
+            "DELETE" -> builder.delete()
+            else -> builder.post(body.toString().toRequestBody(JSON))
+        }
+        http.newCall(builder.build()).execute().use { response ->
+            Reply(response.code, response.body?.string().orEmpty())
+        }
+    }
+
     private suspend fun request(directory: String, path: String, body: JsonObject?): String = withContext(Dispatchers.IO) {
         val http = app.http ?: throw IllegalStateException("Kilo HTTP client is unavailable")
         val url = "http://127.0.0.1:${app.port}$path?directory=${encode(directory)}"
@@ -329,13 +510,27 @@ class KiloAgentBehaviorRpcApiImpl(private val backend: KiloBackendAppService? = 
         }
     }
 
+    /**
+     * Overlays the just-saved MCP entries on top of what the CLI currently reports, so a save is
+     * visible before the CLI reload lands.
+     *
+     * The overlay never carries a client secret (see [saveMcpOverride]); the secret is taken back
+     * from the authoritative config in [items] so the edit dialog still prefills it.
+     */
     private fun withSavedMcp(directory: String, items: Map<String, McpServerConfigDto>): Map<String, McpServerConfigDto> = buildMap {
         syncSaved()
         putAll(items)
         for (item in saved.values) {
             if (item.scope == "workspace" && item.directory != directory) continue
             val cfg = item.config ?: continue
-            put(item.name, McpServerConfigDto(cfg, item.scope))
+            val secret = items[item.name]?.config?.oauth?.clientSecret
+            val oauth = cfg.oauth
+            val merged = if (oauth == null || oauth.clientSecret != null || secret == null) {
+                cfg
+            } else {
+                cfg.copy(oauth = oauth.copy(clientSecret = secret))
+            }
+            put(item.name, McpServerConfigDto(merged, item.scope))
         }
     }
 
@@ -348,11 +543,15 @@ class KiloAgentBehaviorRpcApiImpl(private val backend: KiloBackendAppService? = 
             saved.remove(key)
             return
         }
+        // The overlay only has to make the save visible until the CLI reload lands, so the client
+        // secret is dropped rather than held in a long-lived map. The config the CLI reports back is
+        // the one source for it, and `withSavedMcp` reads it from there.
+        val oauth = config.oauth
         saved[key] = SavedMcp(
             directory = if (scope == "workspace") directory else "",
             name = name,
             scope = scope,
-            config = config,
+            config = if (oauth?.clientSecret == null) config else config.copy(oauth = oauth.copy(clientSecret = null)),
         )
     }
 

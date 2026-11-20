@@ -1,7 +1,9 @@
+import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, ManagedRuntime } from "effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Agent } from "../../src/agent/agent"
+import { Config } from "../../src/config/config"
 import { AgentManagerModelsTool } from "../../src/kilocode/tool/agent-manager-models"
 import { Provider } from "../../src/provider/provider"
 import { MessageID, SessionID } from "../../src/session/schema"
@@ -49,9 +51,10 @@ const providers = {
 
 const runtime = ManagedRuntime.make(
   Layer.mergeAll(
-    Truncate.defaultLayer,
-    Agent.defaultLayer,
-    CrossSpawnSpawner.defaultLayer,
+    AppNodeBuilder.build(Truncate.node),
+    AppNodeBuilder.build(Agent.node),
+    AppNodeBuilder.build(Config.node),
+    AppNodeBuilder.build(CrossSpawnSpawner.node),
     Layer.mock(Provider.Service, { list: () => Effect.succeed(providers) }),
   ),
 )
@@ -83,6 +86,11 @@ function json<T>(value: string): T {
 }
 
 describe("agent_manager_models tool", () => {
+  test("explains Task selection", async () => {
+    const result = await run({ query: "shared" })
+    expect(json<{ hint: string }>(result.output).hint).toContain("to task or agent_manager")
+  })
+
   test("returns models grouped by name, capped at 20", async () => {
     const result = await run({})
     const output = json<{ models: Array<{ name: string }>; total: number; nextOffset?: number }>(result.output)

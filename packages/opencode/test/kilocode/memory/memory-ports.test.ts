@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import type { LanguageModelV3 } from "@ai-sdk/provider"
+import { APICallError } from "ai"
 import { Effect } from "effect"
 import { ModelNotFoundError, type Provider } from "../../../src/provider/provider"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -10,15 +12,23 @@ import type { Session } from "../../../src/session/session"
 import type { SessionSummary } from "../../../src/session/summary"
 import type { Snapshot } from "../../../src/snapshot"
 import { MemoryModel, MemorySession } from "../../../src/kilocode/memory/ports"
+import { MemoryTurn } from "../../../src/kilocode/memory/turn"
+import { installMemoryRuntime } from "../../../src/kilocode/memory/runtime"
+import { InstanceRef } from "../../../src/effect/instance-ref"
+import { KiloMemory } from "@kilocode/kilo-memory/effect"
+import { MemoryService } from "@kilocode/kilo-memory/effect/service"
+import { Global } from "@opencode-ai/core/global"
+import path from "path"
+import { provideTestInstance, tmpdir } from "../../fixture/fixture"
 
 const pid = ProviderV2.ID.make("test")
 const mid = ModelV2.ID.make("fake-memory-model")
 
-function mdl(id = mid): Provider.Model {
+function mdl(id = mid, npm = "test-provider", providerID = pid): Provider.Model {
   return {
     id,
-    providerID: pid,
-    api: { id, npm: "test-provider", url: "" },
+    providerID,
+    api: { id, npm, url: "" },
     limit: { context: 100_000, output: 4_000 },
     capabilities: {
       toolcall: true,
@@ -31,15 +41,22 @@ function mdl(id = mid): Provider.Model {
   } as unknown as Provider.Model
 }
 
-function lang(outputs = ["{}"]): LanguageModelV3 {
+function lang(outputs: (string | Error)[] = ["{}"], calls?: unknown[], hang?: boolean): LanguageModelV3 {
   let idx = 0
+  const next = () => {
+    const item = outputs[idx++] ?? outputs.at(-1) ?? "{}"
+    if (item instanceof Error) throw item
+    return item
+  }
   return {
     specificationVersion: "v3",
     provider: "test",
     modelId: "fake-memory-model",
     supportedUrls: {},
-    doGenerate: async () => {
-      const text = outputs[idx++] ?? outputs.at(-1) ?? "{}"
+    doGenerate: async (...args: Parameters<LanguageModelV3["doGenerate"]>) => {
+      calls?.push(args[0])
+      if (hang) return new Promise(() => {})
+      const text = next()
       return {
         content: [{ type: "text", text }],
         finishReason: { unified: "stop" },
@@ -57,11 +74,22 @@ function lang(outputs = ["{}"]): LanguageModelV3 {
   } as unknown as LanguageModelV3
 }
 
-function provider(input: { outputs?: string[]; seen?: string[] } = {}): Provider.Interface {
-  const base = mdl()
-  const mem = mdl(ModelV2.ID.make("memory-config-model"))
+function provider(
+  input: {
+    outputs?: (string | Error)[]
+    seen?: string[]
+    calls?: unknown[]
+    hang?: boolean
+    npm?: string
+    providerID?: ProviderV2.ID
+    broken?: Effect.Effect<never, ModelNotFoundError>
+  } = {},
+): Provider.Interface {
+  const providerID = input.providerID ?? pid
+  const base = mdl(mid, input.npm, providerID)
+  const mem = mdl(ModelV2.ID.make("memory-config-model"), input.npm, providerID)
   const info = {
-    id: pid,
+    id: providerID,
     name: "Test",
     source: "config",
     env: [],
@@ -69,7 +97,7 @@ function provider(input: { outputs?: string[]; seen?: string[] } = {}): Provider
     models: { [base.id]: base, [mem.id]: mem },
   } satisfies Provider.Info
   return {
-    list: () => Effect.succeed({ [pid]: info }),
+    list: () => Effect.succeed({ [providerID]: info }),
     getProvider: () => Effect.succeed(info),
     getModel: (providerID, modelID) => {
       const found = info.models[modelID]
@@ -78,7 +106,8 @@ function provider(input: { outputs?: string[]; seen?: string[] } = {}): Provider
     },
     getLanguage: (model) => {
       input.seen?.push(model.id)
-      return Effect.succeed(lang(input.outputs))
+      if (input.broken && model.id === mem.id) return input.broken
+      return Effect.succeed(lang(input.outputs, input.calls, input.hang))
     },
     closest: () => Effect.succeed({ providerID: pid, modelID: base.id }),
     getSmallModel: () => Effect.succeed(mem),
@@ -280,6 +309,184 @@ describe("memory ports", () => {
     expect(seen).toEqual(["memory-config-model", "fake-memory-model"])
   })
 
+  test("model port falls back to the session model when the configured model has no language model", async () => {
+    const seen: string[] = []
+    const broken = Effect.fail(
+      new ModelNotFoundError({ providerID: pid, modelID: ModelV2.ID.make("memory-config-model") }),
+    )
+    const port = MemoryModel.port({ provider: provider({ seen, broken }) })
+
+    const result = await Effect.runPromise(port.resolve({ configured: "test/memory-config-model", session: ref }))
+
+    expect(result.fallback).toEqual({ reason: "model unavailable" })
+    expect(seen).toEqual(["memory-config-model", "fake-memory-model"])
+  })
+
+  test("model port falls back to the session model when the configured model's SDK fails to load", async () => {
+    const seen: string[] = []
+    const broken = Effect.die(new Error("sdk failed to load"))
+    const port = MemoryModel.port({ provider: provider({ seen, broken }) })
+
+    const result = await Effect.runPromise(port.resolve({ configured: "test/memory-config-model", session: ref }))
+
+    expect(result.fallback).toEqual({ reason: "model unavailable" })
+    expect(seen).toEqual(["memory-config-model", "fake-memory-model"])
+  })
+
+  test("model port sends x-opencode-session for opencode-managed memory models", async () => {
+    const calls: unknown[] = []
+    const port = MemoryModel.port({
+      provider: provider({ providerID: ProviderV2.ID.make("opencode"), calls }),
+    })
+    const resolved = await Effect.runPromise(port.resolve({ session: ref }))
+
+    await port.run({
+      handle: resolved.handle,
+      sessionID: "ses_memory_headers",
+      system: "system",
+      prompt: "prompt",
+      timeoutMs: 30_000,
+    })
+
+    const opts = calls[0] as { headers?: Record<string, string> }
+    expect(opts.headers?.["x-opencode-session"]).toBe("ses_memory_headers")
+  })
+
+  test("model port omits opencode headers for non-opencode memory models", async () => {
+    const calls: unknown[] = []
+    const port = MemoryModel.port({ provider: provider({ calls }) })
+    const resolved = await Effect.runPromise(port.resolve({ session: ref }))
+
+    await port.run({
+      handle: resolved.handle,
+      sessionID: "ses_memory_headers",
+      system: "system",
+      prompt: "prompt",
+      timeoutMs: 30_000,
+    })
+
+    const opts = calls[0] as { headers?: Record<string, string> }
+    expect(opts.headers?.["x-opencode-session"]).toBeUndefined()
+  })
+
+  test("model port asks OpenAI-compatible providers for a non-streaming JSON response", async () => {
+    const calls: unknown[] = []
+    const port = MemoryModel.port({ provider: provider({ npm: "@ai-sdk/openai-compatible", calls }) })
+    const resolved = await Effect.runPromise(port.resolve({ session: ref }))
+
+    await port.run({ handle: resolved.handle, sessionID: "ses_test", system: "system", prompt: "prompt", timeoutMs: 30_000 })
+
+    const opts = calls[0] as { providerOptions?: Record<string, { stream?: boolean }> }
+    expect(opts.providerOptions?.test?.stream).toBe(false)
+  })
+
+  test("model port still disables streaming when a compatible model is registered as openai", async () => {
+    const calls: unknown[] = []
+    const port = MemoryModel.port({
+      provider: provider({
+        npm: "@ai-sdk/openai-compatible",
+        providerID: ProviderV2.ID.make("openai"),
+        calls,
+      }),
+    })
+    const resolved = await Effect.runPromise(port.resolve({ session: ref }))
+
+    await port.run({ handle: resolved.handle, sessionID: "ses_test", system: "system", prompt: "prompt", timeoutMs: 30_000 })
+
+    const opts = calls[0] as { providerOptions?: Record<string, { stream?: boolean }> }
+    expect(opts.providerOptions?.openai?.stream).toBe(false)
+  })
+
+  test("model port puts stream:false on the OpenAI-compatible request body", async () => {
+    const seen: unknown[] = []
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const body = await request.json()
+        seen.push(body)
+        if ((body as { stream?: boolean }).stream !== false) {
+          return new Response(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "The" } }] })}\n\n`, {
+            headers: { "content-type": "text/event-stream" },
+          })
+        }
+        return Response.json({
+          id: "mem",
+          object: "chat.completion",
+          created: 0,
+          model: "fake-memory-model",
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant",
+                content: '{"topic":"t","summary":"s"}',
+                reasoning_content: "The user just",
+              },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        })
+      },
+    })
+    try {
+      const sdk = createOpenAICompatible({
+        name: "test",
+        baseURL: `http://127.0.0.1:${server.port}/v1`,
+        apiKey: "unused",
+      })
+      const port = MemoryModel.port({
+        provider: {
+          ...provider({ npm: "@ai-sdk/openai-compatible" }),
+          getLanguage: () => Effect.succeed(sdk.languageModel("fake-memory-model")),
+        },
+      })
+      const resolved = await Effect.runPromise(port.resolve({ session: ref }))
+      const result = await port.run({
+        handle: resolved.handle,
+        sessionID: "ses_test",
+        system: "system",
+        prompt: "prompt",
+        timeoutMs: 30_000,
+      })
+
+      expect((seen[0] as { stream?: boolean }).stream).toBe(false)
+      expect(result.text).toBe('{"topic":"t","summary":"s"}')
+    } finally {
+      server.stop(true)
+    }
+  })
+
+  test("model port retries a transient provider failure once", async () => {
+    const calls: unknown[] = []
+    const err = new APICallError({
+      message: "temporarily unavailable",
+      url: "https://example.com/v1/generate",
+      requestBodyValues: {},
+      statusCode: 503,
+      responseHeaders: {},
+      responseBody: '{"error":"temporarily unavailable"}',
+      isRetryable: true,
+    })
+    const port = MemoryModel.port({ provider: provider({ outputs: [err, "{}"], calls }) })
+    const resolved = await Effect.runPromise(port.resolve({ session: ref }))
+
+    await port.run({ handle: resolved.handle, sessionID: "ses_test", system: "system", prompt: "prompt", timeoutMs: 30_000 })
+
+    expect(calls).toHaveLength(2)
+    const opts = calls[0] as { providerOptions?: Record<string, { stream?: boolean }> }
+    expect(opts.providerOptions?.test?.stream).toBeUndefined()
+  })
+
+  test("model port emits a structured timeout error", async () => {
+    const port = MemoryModel.port({ provider: provider({ hang: true }) })
+    const resolved = await Effect.runPromise(port.resolve({ session: ref }))
+
+    await expect(
+      port.run({ handle: resolved.handle, sessionID: "ses_test", system: "system", prompt: "prompt", timeoutMs: 1 }),
+    ).rejects.toMatchObject({ name: "TimeoutError", message: "memory model timed out" })
+  })
+
   test("model port clears its timeout after successful output", async () => {
     const set = globalThis.setTimeout
     const clear = globalThis.clearTimeout
@@ -306,6 +513,7 @@ describe("memory ports", () => {
 
       await port.run({
         handle: resolved.handle,
+        sessionID: "ses_test",
         system: "system",
         prompt: "prompt",
         timeoutMs: 30_000,
@@ -317,5 +525,87 @@ describe("memory ports", () => {
 
     expect(handles.size).toBe(1)
     expect(cleared.size).toBe(1)
+  })
+})
+
+describe("memory turn", () => {
+  function config(model?: string | null) {
+    return { get: () => Effect.succeed({ memory_model: model }) }
+  }
+
+  async function close(model?: string | null, broken?: Effect.Effect<never, ModelNotFoundError>) {
+    await using tmp = await tmpdir({ git: true })
+    const sessionID = SessionID.make("ses_memory_turn")
+    const uid = MessageID.make("msg_turn_user")
+    const final = MessageID.make("msg_turn_final")
+    const messages = [
+      user({ sessionID, id: uid, body: "Which command runs the CLI memory tests?" }),
+      assistant({
+        sessionID,
+        id: final,
+        parentID: uid,
+        time: 2,
+        parts: [text(sessionID, final, "Run bun test from packages/opencode for CLI memory tests.")],
+      }),
+    ]
+    const seen: string[] = []
+    const prior = Global.Path.data
+    ;(Global.Path as { data: string }).data = path.join(tmp.path, "data")
+    installMemoryRuntime()
+    try {
+      await provideTestInstance({
+        directory: tmp.path,
+        fn: async (ctx) => {
+          await KiloMemory.enable({ ctx })
+          await Effect.runPromise(
+            MemoryTurn.close({
+              sessionID,
+              reason: "completed",
+              sessions: sessions(messages),
+              summary: summary({ seen: [], diffs: [] }),
+              provider: provider({
+                seen,
+                broken,
+                outputs: [
+                  '{"topic":"memory","summary":"Found the CLI memory test command.","operations":[],"skipped":[]}',
+                ],
+              }),
+              config: config(model),
+            }).pipe(
+              Effect.provideService(InstanceRef, ctx),
+              Effect.provideService(MemoryService.Service, MemoryService.make()),
+            ),
+          )
+        },
+      })
+    } finally {
+      ;(Global.Path as { data: string }).data = prior
+    }
+    return seen
+  }
+
+  test("close runs automatic saves on the configured memory_model", async () => {
+    expect(await close("test/memory-config-model")).toEqual(["memory-config-model"])
+  })
+
+  test("close uses the session model when memory_model is unset", async () => {
+    expect(await close()).toEqual(["fake-memory-model"])
+  })
+
+  test("close uses the session model when memory_model is null", async () => {
+    expect(await close(null)).toEqual(["fake-memory-model"])
+  })
+
+  test("close falls back to the session model when memory_model is malformed", async () => {
+    expect(await close("memory-config-model")).toEqual(["fake-memory-model"])
+  })
+
+  test("close falls back to the session model when memory_model is unavailable", async () => {
+    expect(await close("test/missing-memory-model")).toEqual(["fake-memory-model"])
+  })
+
+  test("close falls back to the session model when the configured memory_model cannot load", async () => {
+    const broken = Effect.die(new Error("sdk failed to load"))
+    expect(await close("test/memory-config-model", broken)).toEqual(["memory-config-model", "fake-memory-model"])
   })
 })

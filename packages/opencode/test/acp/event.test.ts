@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import type { AgentSideConnection } from "@agentclientprotocol/sdk"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import type { Event, Message, KiloClient, Part, SessionMessageResponse, ToolPart } from "@kilocode/sdk/v2"
 import { Effect, ManagedRuntime } from "effect"
 import { ACPEvent } from "@/acp/event"
@@ -30,7 +31,7 @@ const pollUntil = async (
 }
 
 function makeSessionService() {
-  return ManagedRuntime.make(ACPSession.defaultLayer).runSync(
+  return ManagedRuntime.make(LayerNode.compile(ACPSession.node)).runSync(
     ACPSession.Service.use((service) => Effect.succeed(service)),
   )
 }
@@ -318,6 +319,53 @@ async function createKnownSession(
 }
 
 describe("acp event routing", () => {
+  // kilocode_change start
+  it("waits for the current turn's idle after receiving a stale idle", async () => {
+    const harness = createHarness()
+    const called = Promise.withResolvers<void>()
+    const response = Promise.withResolvers<{ data: { info: { id: string } } }>()
+    const state = { done: false }
+    const idle = {
+      id: "evt_idle",
+      type: "session.status",
+      properties: { sessionID: "ses_a", status: { type: "idle" } },
+    } as Event
+    const message = {
+      id: "evt_current",
+      type: "message.updated",
+      properties: { sessionID: "ses_a", info: { id: "msg_current" } },
+    } as Event
+
+    harness.subscription.start()
+    try {
+      await pollUntil(() => harness.calls.eventSubscribe === 1, "event stream did not connect")
+      await Bun.sleep(0)
+      const result = harness.subscription
+        .runUntilIdle("ses_a", () => {
+          called.resolve()
+          return response.promise
+        })
+        .then(() => {
+          state.done = true
+        })
+
+      await called.promise
+      await harness.subscription.handle(idle)
+      response.resolve({ data: { info: { id: "msg_current" } } })
+      await Bun.sleep(0)
+      await harness.subscription.handle(message)
+      await Bun.sleep(0)
+      expect(state.done).toBe(false)
+
+      await harness.subscription.handle(idle)
+      await result
+      expect(state.done).toBe(true)
+    } finally {
+      harness.subscription.stop()
+    }
+  })
+  // kilocode_change end
+
   it("routes message.part.delta by sessionID without cross-session pollution", async () => {
     const harness = createHarness()
     await createKnownSession(harness.session, "ses_a", { messageId: "msg_a", partId: "part_a", partType: "text" })
@@ -517,7 +565,7 @@ describe("acp event routing", () => {
     expect(harness.updates).toHaveLength(0)
   })
 
-  it("emits synthetic pending before the first running tool update", async () => {
+  it("exposes the shell command on the synthetic pending tool call", async () => {
     const harness = createHarness()
     await Effect.runPromise(harness.session.create({ id: "ses_tool", cwd: "/workspace" }))
 
@@ -527,7 +575,14 @@ describe("acp event routing", () => {
       "tool_call",
       "tool_call_update",
     ])
-    expect(harness.updates[0]?.update).toMatchObject({ status: "pending", toolCallId: "call_1" })
+    expect(harness.updates[0]?.update).toMatchObject({
+      status: "pending",
+      toolCallId: "call_1",
+      title: "printf hello",
+      kind: "execute",
+      locations: [{ path: "/workspace" }],
+      rawInput: { cmd: "printf hello", cwd: "/workspace" },
+    })
     expect(harness.updates[1]?.update).toMatchObject({ status: "in_progress", toolCallId: "call_1" })
   })
 

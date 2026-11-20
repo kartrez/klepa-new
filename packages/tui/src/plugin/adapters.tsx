@@ -66,10 +66,6 @@ function routeCurrent(route: ReturnType<typeof useRoute>): TuiPluginApi["route"]
     }
   }
 
-  // kilocode_change start
-  if (route.data.type === "kiloclaw") return { name: "kiloclaw" }
-  // kilocode_change end
-
   return {
     name: route.data.id,
     params: route.data.data,
@@ -107,6 +103,11 @@ function stateApi(sync: ReturnType<typeof useSync>): TuiPluginApi["state"] {
     get config() {
       return sync.data.config
     },
+    // kilocode_change start
+    get globalConfig() {
+      return sync.data.globalConfig
+    },
+    // kilocode_change end
     get provider() {
       return sync.data.provider
     },
@@ -117,6 +118,7 @@ function stateApi(sync: ReturnType<typeof useSync>): TuiPluginApi["state"] {
       if (!sync.data.vcs) return
       return {
         branch: sync.data.vcs.branch,
+        default_branch: sync.data.vcs.default_branch,
       }
     },
     session: {

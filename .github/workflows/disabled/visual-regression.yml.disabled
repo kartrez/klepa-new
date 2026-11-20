@@ -59,7 +59,8 @@ jobs:
     needs: check-paths
     if: needs.check-paths.outputs.matched == 'true'
     name: Visual Regression (kilo-ui) # kilocode_change
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # kilocode_change: temporary GitHub-hosted runner while Blacksmith apt mirror connectivity is broken, see Blacksmith report for run 34574732611
+    runs-on: ubuntu-24.04 # kilocode_change
     timeout-minutes: 15
 
     steps:
@@ -106,7 +107,13 @@ jobs:
         working-directory: packages/kilo-ui
 
       - name: Install Playwright system deps
-        run: bunx playwright install-deps chromium
+        run: |
+          # Prefer the public archive and retain Azure as a lower-priority fallback.
+          printf '%s\tpriority:%s\n' \
+            'https://archive.ubuntu.com/ubuntu' 1 \
+            'http://azure.archive.ubuntu.com/ubuntu' 2 |
+            sudo tee /etc/apt/apt-mirrors.txt
+          bunx playwright install-deps chromium
         working-directory: packages/kilo-ui
 
       - name: Cache Storybook build
@@ -221,7 +228,8 @@ jobs:
     needs: check-paths
     if: needs.check-paths.outputs.matched == 'true'
     name: Visual Regression (kilo-vscode webview) # kilocode_change
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # kilocode_change: temporary GitHub-hosted runner while Blacksmith apt mirror connectivity is broken, see Blacksmith report for run 34574732611
+    runs-on: ubuntu-24.04 # kilocode_change
     timeout-minutes: 15
     env:
       NODE_OPTIONS: --max-old-space-size=4096
@@ -270,7 +278,13 @@ jobs:
         working-directory: packages/kilo-vscode
 
       - name: Install Playwright system deps
-        run: bunx playwright install-deps chromium
+        run: |
+          # Prefer the public archive and retain Azure as a lower-priority fallback.
+          printf '%s\tpriority:%s\n' \
+            'https://archive.ubuntu.com/ubuntu' 1 \
+            'http://azure.archive.ubuntu.com/ubuntu' 2 |
+            sudo tee /etc/apt/apt-mirrors.txt
+          bunx playwright install-deps chromium
         working-directory: packages/kilo-vscode
 
       - name: Cache Storybook build

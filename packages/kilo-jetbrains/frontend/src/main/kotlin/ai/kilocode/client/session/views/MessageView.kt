@@ -1,15 +1,19 @@
 package ai.kilocode.client.session.views
 
+import ai.kilocode.client.session.SessionDiffOpener
 import ai.kilocode.client.session.SessionFileOpener
 import ai.kilocode.client.session.model.Compaction
 import ai.kilocode.client.session.model.Content
 import ai.kilocode.client.session.model.FileAttachment
 import ai.kilocode.client.session.model.Message
+import ai.kilocode.client.session.model.Notice
 import ai.kilocode.client.session.model.Reasoning
 import ai.kilocode.client.session.model.StepFinish
 import ai.kilocode.client.session.model.Text
 import ai.kilocode.client.session.model.Tool
 import ai.kilocode.client.session.model.ToolCallRef
+import ai.kilocode.client.session.settings.TranscriptDisplay
+import ai.kilocode.client.session.settings.TranscriptDisplayTarget
 import ai.kilocode.client.session.model.ToolExecState
 import ai.kilocode.client.session.ui.RevertProgress
 import ai.kilocode.client.session.ui.SessionView
@@ -17,13 +21,25 @@ import ai.kilocode.client.session.ui.style.SessionEditorStyle
 import ai.kilocode.client.session.ui.selection.SessionCopyTarget
 import ai.kilocode.client.session.ui.selection.SessionSelection
 import ai.kilocode.client.session.ui.style.SessionEditorStyleTarget
+import ai.kilocode.client.session.ui.search.TranscriptSearchBody
 import ai.kilocode.client.session.views.base.PartView
+import ai.kilocode.client.session.views.tool.EditToolView
+import ai.kilocode.client.session.views.tool.ApprovalReasonTarget
 import ai.kilocode.client.session.ui.style.SessionUiStyle
+import ai.kilocode.client.plugin.KiloBundle
+import ai.kilocode.client.ui.ToolbarButtonAction
 import ai.kilocode.client.ui.layout.HAlign
 import ai.kilocode.client.ui.layout.VAlign
 import ai.kilocode.client.ui.layout.align
+import ai.kilocode.client.ui.toolbarButton
+import ai.kilocode.client.ui.UiStyle
+import ai.kilocode.client.ui.layout.Stack
+import ai.kilocode.client.ui.layout.StackAxis
+import ai.kilocode.rpc.dto.MessageErrorDto
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.util.Disposer
+import com.intellij.ui.components.JBLabel
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
@@ -31,6 +47,7 @@ import java.awt.Point
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.RenderingHints
+import javax.accessibility.AccessibleContext
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
@@ -57,6 +74,14 @@ class MessageView(
     private val repo: String? = null,
     private val hover: ((PartView, Boolean) -> Unit)? = null,
     private val revert: ((String) -> Unit)? = null,
+    // Forks the session at this message. Null on surfaces that cannot fork (sidebar, read-only tabs).
+    private val fork: ((String) -> Unit)? = null,
+    private val onOpenSubagent: ((String, String) -> Unit)? = null,
+    private val onPromoteBackgroundAgent: BackgroundPromote? = null,
+    /** Sibling color slot for a child session's generated avatar. See [ai.kilocode.client.session.AgentAvatar]. */
+    private val avatarColor: (String) -> Int? = { null },
+    /** Whether a block in this message may auto-expand from the transcript display settings. */
+    private val live: () -> Boolean = { true },
 ) : ai.kilocode.client.session.ui.SessionLayoutPanel(
     SessionUiStyle.SessionLayout.GAP,
 ), Disposable, SessionEditorStyleTarget, SessionView {
@@ -74,6 +99,10 @@ class MessageView(
         get() = role == SessionUiStyle.View.Message.USER_ROLE && msg.parts.values.any { it is Compaction }
 
     private val parts = LinkedHashMap<String, PartView>()
+    // Latest Content per id. [msg] is the Message instance this view was built from, and
+    // SessionModel.upsertMessage replaces that instance on every message.updated; parts added
+    // afterwards only exist on the replacement, so accessibility fallbacks read from here.
+    private val contents = LinkedHashMap<String, Content>()
     // Adjacent reasoning parts render through the first ReasoningView. aliases maps each
     // merged child id to that owner id, and sources stores the child's latest full text
     // so snapshot updates can append only deltas.
@@ -83,11 +112,21 @@ class MessageView(
     private var hidden: ToolCallRef? = null
     private var prompt: PromptView? = null
     private var promptBox: JPanel? = null
+    // Stacks the non-text content of a user prompt bubble: attachment chips and unreadable-attachment
+    // notices, so both read as part of the prompt rather than as separate rows beneath it.
+    private var promptSouth: Stack? = null
     private var wrap: PromptWrap? = null
+    private var openDiff: SessionDiffOpener = { _, _, _ -> }
+    private var sessionId: String? = null
+    private var reverted = false
+    private var failure: MessageErrorView? = null
+    private var summary = ""
+    private var detail = ""
+    private var origin: String? = null
 
     init {
         isOpaque = false
-        if (msg.info.role == SessionUiStyle.View.Message.USER_ROLE) background = style.editorScheme.defaultBackground
+        if (msg.info.role == SessionUiStyle.View.Message.USER_ROLE) background = SessionUiStyle.View.Prompt.bgColor(style)
         border = assistantBorder()
 
         // Populate content that already exists (e.g. after loadHistory)
@@ -96,6 +135,53 @@ class MessageView(
             if (isHidden(content)) continue
             addPart(content)
         }
+        syncAccessibility()
+        syncVisibility()
+    }
+
+    /**
+     * Show, update, or drop the failure this message ended with. Returns true when anything visible
+     * changed, so the panel only relayouts on a real change — `message.updated` also fires on every
+     * streamed token/cost delta.
+     *
+     * [SessionModel.upsertMessage] replaces the [Message] instance while this view keeps the original,
+     * so the error has to be passed in rather than read back off [msg].
+     */
+    @RequiresEdt
+    fun syncError(error: MessageErrorDto?): Boolean {
+        val text = failureText(error)
+        val existing = failure
+        if (text == null) {
+            if (existing == null) return false
+            failure = null
+            remove(existing)
+            refresh()
+            return true
+        }
+        if (existing != null) {
+            if (!existing.setText(text)) return false
+            refresh()
+            return true
+        }
+        val view = MessageErrorView().also {
+            it.applyStyle(style)
+            it.setText(text)
+        }
+        failure = view
+        add(view)
+        refresh()
+        return true
+    }
+
+    /** Insertion slot that keeps the failure card last, or -1 to append when there is none. */
+    private fun tail(): Int = failure?.let { components.indexOf(it) } ?: -1
+
+    fun setDiffOpener(openDiff: SessionDiffOpener, sessionId: String?) {
+        this.openDiff = openDiff
+        this.sessionId = sessionId
+        // Rebind parts created before the opener was wired (e.g. history load), matching the
+        // late-binding TurnView already does for its ModifiedFilesView card.
+        for (view in parts.values) if (view is EditToolView) view.setDiffOpener(openDiff, sessionId)
     }
 
     /**
@@ -108,6 +194,26 @@ class MessageView(
         rebuildParts()
     }
 
+    @RequiresEdt
+    fun syncApprovalReasons(visible: Boolean): Boolean {
+        var changed = false
+        for (view in parts.values) {
+            if (view is ApprovalReasonTarget) changed = view.syncApprovalReason(visible) || changed
+        }
+        if (changed) refresh()
+        return changed
+    }
+
+    @RequiresEdt
+    fun syncTranscriptDisplay(display: TranscriptDisplay, force: Boolean = false): Boolean {
+        var changed = false
+        for (view in parts.values) {
+            if (view is TranscriptDisplayTarget) changed = view.syncTranscriptDisplay(display, force) || changed
+        }
+        if (changed) refresh()
+        return changed
+    }
+
     /** Add or update the renderer for [content]. */
     @RequiresEdt
     fun upsertPart(content: Content) {
@@ -117,7 +223,9 @@ class MessageView(
     @RequiresEdt
     fun upsertPartChanged(content: Content): Boolean {
         if (content is StepFinish) return false
+        contents[content.id] = content
         if (isHidden(content)) {
+            contents.remove(content.id)
             if (isPromptMention(content)) syncPromptMentions()
             // Remove any stale view for this content so it disappears when suppressed
             val id = aliases.remove(content.id)
@@ -135,6 +243,7 @@ class MessageView(
                 detach(stale)
                 remove(stale)
                 Disposer.dispose(stale)
+                syncPromptSouth()
                 syncBorder()
                 refresh()
                 return true
@@ -166,6 +275,7 @@ class MessageView(
                 return false
             }
             existing.update(content)
+            if (content is Text && existing === prompt) wrap?.syncInjected()
             syncPromptToolbar()
             refresh()
             return true
@@ -178,8 +288,13 @@ class MessageView(
 
     @RequiresEdt
     private fun addPart(content: Content) {
+        contents[content.id] = content
         if (content is FileAttachment && role == SessionUiStyle.View.Message.USER_ROLE) {
             addAttachment(content)
+            return
+        }
+        if (content is Notice && role == SessionUiStyle.View.Message.USER_ROLE) {
+            addNotice(content)
             return
         }
         if (content is Reasoning) {
@@ -192,12 +307,11 @@ class MessageView(
             }
         }
         val view = view(content)
-        val item = wrapPrompt(view)
         view.resize = resize
         view.hover = hover
         view.applyStyle(style)
         parts[content.id] = view
-        add(item)
+        wrapPrompt(view)?.let { add(it, tail()) }
     }
 
     @RequiresEdt
@@ -207,14 +321,28 @@ class MessageView(
             it.hover = hover
             it.applyStyle(style)
             attachments = it
-            add(it)
+            ensurePromptSouth().add(it)
         }
         view.upsert(content)
         parts[content.id] = view
     }
 
+    // A notice renders inside the prompt bubble, under the prompt text, next to any attachment chips.
+    @RequiresEdt
+    private fun addNotice(content: Notice) {
+        val view = NoticeView(content).also {
+            it.resize = resize
+            it.hover = hover
+            it.applyStyle(style)
+        }
+        parts[content.id] = view
+        ensurePromptSouth().add(view)
+        refresh()
+    }
+
     @RequiresEdt
     private fun updateAlias(content: Reasoning, id: String): Boolean {
+        contents[content.id] = content
         val view = parts[id] as? ReasoningView ?: return false
         val prev = sources[content.id].orEmpty()
         val next = content.content.toString()
@@ -233,20 +361,24 @@ class MessageView(
 
     @RequiresEdt
     private fun replacePart(content: Content, existing: PartView) {
-        val at = components.indexOfFirst { it === existing }.takeIf { it >= 0 } ?: componentCount
+        // A replaced tool view is a direct child, so re-insert at its own slot. Only fall back to
+        // the prompt wrap's index when the replaced view is nested inside it, otherwise the wrap's
+        // lower index would push the replacement above the prompt bubble on user messages.
+        val at = (if (existing.parent !== this) components.indexOf(wrap) else components.indexOfFirst { it === existing })
+            .takeIf { it >= 0 } ?: componentCount
+        contents[content.id] = content
         parts.remove(content.id)
         aliases.values.removeAll { it == content.id }
         sources.keys.removeAll { it !in aliases }
-        detach(existing)
-        remove(existing)
+        removeView(existing)
+        if (existing === prompt) prompt = null
         Disposer.dispose(existing)
         val view = view(content)
-        val item = wrapPrompt(view)
         view.resize = resize
         view.hover = hover
         view.applyStyle(style)
         parts[content.id] = view
-        add(item, at)
+        wrapPrompt(view)?.let { add(it, at) }
         syncBorder()
         refresh()
     }
@@ -261,9 +393,11 @@ class MessageView(
     fun removePartChanged(contentId: String): Boolean {
         if (aliases.remove(contentId) != null) {
             sources.remove(contentId)
+            contents.remove(contentId)
             return true
         }
         val view = parts.remove(contentId) ?: return false
+        contents.remove(contentId)
         if (view is PromptAttachmentView) {
             view.remove(contentId)
             if (!view.isEmpty()) {
@@ -274,10 +408,13 @@ class MessageView(
         }
         aliases.values.removeAll { it == contentId }
         sources.keys.removeAll { it !in aliases }
-        detach(view)
-        remove(view)
+        removeView(view)
         Disposer.dispose(view)
+        if (view === prompt) prompt = null
+        if (view is PromptView) wrap?.syncInjected()
+        syncPromptSouth()
         syncBorder()
+        syncPromptWrap()
         refresh()
         return true
     }
@@ -305,16 +442,21 @@ class MessageView(
     @RequiresEdt
     private fun rebuildParts() {
         parts.values.distinct().forEach {
-            detach(it)
-            remove(it)
+            removeView(it)
             Disposer.dispose(it)
         }
+        wrap?.let {
+            it.release()
+            remove(it)
+        }
         parts.clear()
+        contents.clear()
         aliases.clear()
         sources.clear()
         attachments = null
         prompt = null
         promptBox = null
+        promptSouth = null
         wrap = null
         for ((_, content) in msg.parts) {
             if (content is StepFinish) continue
@@ -332,9 +474,17 @@ class MessageView(
     }
 
     private fun view(content: Content) = if (msg.info.role == SessionUiStyle.View.Message.USER_ROLE) {
-        ViewFactory.createUser(content, openFile, openUrl, selection, repo, promptMentions(msg)) { openAttachment(msg.info.id, it) }
+        ViewFactory.createUser(
+            content, openFile, openUrl, selection, repo, promptMentions(msg),
+            { openAttachment(msg.info.id, it) }, openDiff, sessionId,
+            onOpenSubagent = onOpenSubagent, live = live, avatarColor = avatarColor, onPromoteBackgroundAgent = onPromoteBackgroundAgent,
+        )
     } else {
-        ViewFactory.create(content, openFile, openUrl, selection, repo) { openAttachment(msg.info.id, it) }
+        ViewFactory.create(
+            content, openFile, openUrl, selection, repo,
+            { openAttachment(msg.info.id, it) }, openDiff, sessionId,
+            onOpenSubagent = onOpenSubagent, live = live, avatarColor = avatarColor, onPromoteBackgroundAgent = onPromoteBackgroundAgent,
+        )
     }
 
     private fun syncPromptMentions() {
@@ -358,6 +508,7 @@ class MessageView(
         if (id != null) sources[contentId] = sources[contentId].orEmpty() + delta
         val part = parts[id ?: contentId] ?: return false
         part.appendDelta(delta)
+        if (needsSync(id ?: contentId)) syncAccessibility()
         syncPromptToolbar()
         return true
     }
@@ -385,16 +536,56 @@ class MessageView(
     /** Ordered part ids — stable for test assertions. */
     fun partIds(): List<String> = parts.keys.toList()
 
+    /**
+     * Conversation prose bodies in display order. Only user/assistant [Text] parts qualify; tool,
+     * reasoning, diff, diagram, notice, and attachment renderers are never enumerated.
+     */
+    @RequiresEdt
+    internal fun searchBodies(): List<TranscriptSearchBody> {
+        if (!isVisible || reverted) return emptyList()
+        val out = ArrayList<TranscriptSearchBody>()
+        for ((id, view) in parts) {
+            if (contents[id] !is Text) continue
+            val text = view as? TextView ?: continue
+            val isPrompt = text === prompt
+            out.add(
+                TranscriptSearchBody(
+                    key = "${msg.info.id}/$id",
+                    md = text.md,
+                    reveal = { if (isPrompt) wrap?.setCollapsed(false) },
+                    collapsed = { isPrompt && wrap?.isCollapsed() == true },
+                ),
+            )
+        }
+        return out
+    }
+
     /** Compact dump for test assertions. */
     fun dump(): String = parts.values.joinToString(", ") { it.dumpLabel() }
 
     @RequiresEdt
     fun promptToolbarActive() = promptToolbar?.active() == true
 
+    /**
+     * Prompt content without [PromptWrap]'s toolbar/footer. Historical prompts without a wrap paint
+     * their bubble on this message itself, so the message is the correct fallback for those.
+     */
+    @RequiresEdt
+    fun promptTarget(): JComponent? {
+        if (role != SessionUiStyle.View.Message.USER_ROLE || !isVisible) return null
+        return promptBox ?: this.takeIf { componentCount > 0 }
+    }
+
     @RequiresEdt
     fun setReverting(active: Boolean, text: String, onCancel: () -> Unit) {
         if (role != SessionUiStyle.View.Message.USER_ROLE) return
         wrap?.setReverting(active, text, onCancel)
+    }
+
+    @RequiresEdt
+    fun setQueued(active: Boolean, onDelete: () -> Unit) {
+        if (role != SessionUiStyle.View.Message.USER_ROLE) return
+        wrap?.setQueued(active, onDelete)
     }
 
     private val promptToolbar: MessageToolbar?
@@ -408,23 +599,32 @@ class MessageView(
     @RequiresEdt
     override fun applyStyle(style: SessionEditorStyle) {
         this.style = style
-        if (msg.info.role == SessionUiStyle.View.Message.USER_ROLE) background = style.editorScheme.defaultBackground
+        if (msg.info.role == SessionUiStyle.View.Message.USER_ROLE) background = SessionUiStyle.View.Prompt.bgColor(style)
         for (view in parts.values) view.applyStyle(style)
+        wrap?.applyStyle(style)
+        failure?.applyStyle(style)
         refresh()
     }
 
     @RequiresEdt
     override fun dispose() {
         parts.values.forEach {
-            detach(it)
-            remove(it)
+            removeView(it)
             Disposer.dispose(it)
         }
+        wrap?.let {
+            it.release()
+            remove(it)
+        }
+        failure?.let { remove(it) }
+        failure = null
         parts.clear()
+        contents.clear()
         aliases.clear()
         sources.clear()
         prompt = null
         promptBox = null
+        promptSouth = null
         wrap = null
         hidden = null
     }
@@ -440,7 +640,11 @@ class MessageView(
             super.paintComponent(g)
             return
         }
-        paintPromptBox(g, this)
+        // Historical user prompts render their text as a plain child that relies on this surface fill,
+        // so paint it whenever the message has content. An empty user message (a bare turn anchor with
+        // no parts) lays out ~1px tall; painting its bubble there would leave a thin light stripe at
+        // the top of the turn, so skip it.
+        if (componentCount > 0) paintPromptBox(g, this)
         super.paintComponent(g)
     }
 
@@ -448,25 +652,105 @@ class MessageView(
         val g2 = g.create() as Graphics2D
         try {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            val arc = JBUI.scale(JBUI.getInt("Button.arc", SessionUiStyle.View.Prompt.CORNER_ARC))
+            val arc = JBUI.scale(SessionUiStyle.View.BLOCK_ARC)
             val pt = if (box === this) Point() else SwingUtilities.convertPoint(box, Point(), this)
-            val x = pt.x
-            val y = pt.y
-            val w = box.width - 1
-            val h = box.height - 1
-            g2.color = style.editorScheme.defaultBackground
-            g2.fillRoundRect(x, y, box.width, box.height, arc, arc)
-            g2.color = SessionUiStyle.View.Outline.color()
-            if (w > 0 && h > 0) g2.drawRoundRect(x, y, w, h, arc, arc)
+            g2.color = SessionUiStyle.View.Prompt.bgColor(style)
+            g2.fillRoundRect(pt.x, pt.y, box.width, box.height, arc, arc)
         } finally {
             g2.dispose()
         }
     }
 
+    /**
+     * Mark this message as reverted (rolled back). A reverted message is hidden regardless of its
+     * content; the panel drives this from the model's revert state.
+     */
+    @RequiresEdt
+    fun setReverted(value: Boolean) {
+        reverted = value
+        syncVisibility()
+    }
+
+    /**
+     * An empty message (no rendered parts) would otherwise lay out as a ~1px row and add a stray gap
+     * at the top of its turn — a bare user turn anchor is the common case. Keep such a message present
+     * for lookup/streaming but invisible so [ai.kilocode.client.session.ui.SessionLayout] skips it and
+     * its gap; it reappears as soon as content arrives. Reverted messages stay hidden either way.
+     */
+    @RequiresEdt
+    private fun syncVisibility() {
+        isVisible = componentCount > 0 && !reverted
+    }
+
     @RequiresEdt
     private fun refresh() {
+        syncAccessibility()
+        syncVisibility()
         revalidate()
         repaint()
+    }
+
+    @RequiresEdt
+    private fun syncAccessibility() {
+        val prefix = when (role) {
+            SessionUiStyle.View.Message.USER_ROLE -> KiloBundle.message("session.message.accessible.user")
+            SessionUiStyle.View.Message.ASSISTANT_ROLE -> KiloBundle.message("session.message.accessible.assistant")
+            else -> KiloBundle.message("session.message.accessible.other", role)
+        }
+        var text: TextView? = null
+        var plain = ""
+        for (view in parts.values) {
+            if (view !is TextView) continue
+            val candidate = plainText(view.markdown(ACCESSIBILITY_SCAN_LIMIT))
+            if (candidate.isEmpty()) continue
+            text = view
+            plain = candidate
+            break
+        }
+        val source = text?.contentId
+        val body = if (text != null) summarize(plain) else fallback()
+        origin = source
+        detail = body.orEmpty()
+        val next = body?.let {
+            KiloBundle.message("session.message.accessible.summary", prefix, it)
+        } ?: prefix
+        if (summary == next) return
+        val old = summary
+        summary = next
+        accessibleContext?.firePropertyChange(AccessibleContext.ACCESSIBLE_NAME_PROPERTY, old, next)
+    }
+
+    /**
+     * Recompute only when the delta can change the announced prefix. Once [detail] is capped, and
+     * when the delta belongs to a part other than the one supplying the text, the summary cannot
+     * change, so streamed tokens stay cheap instead of rescanning the growing source each time.
+     */
+    private fun needsSync(id: String): Boolean {
+        val source = origin ?: return parts[id] is TextView
+        return source == id && detail.length < ACCESSIBILITY_SUMMARY_LIMIT
+    }
+
+    private fun fallback(): String? = contents.values.asSequence()
+        .filter { it.id in parts }
+        .mapNotNull {
+            when (it) {
+                is Reasoning -> KiloBundle.message("session.part.reasoning")
+                is Tool -> it.title?.takeIf(String::isNotBlank) ?: it.name
+                is FileAttachment -> it.filename ?: KiloBundle.message("session.message.accessible.attachment")
+                is Compaction -> KiloBundle.message("session.part.compaction")
+                is Notice -> it.name ?: KiloBundle.message("session.message.accessible.notice")
+                else -> null
+            }
+        }
+        .firstOrNull()
+
+    override fun getAccessibleContext(): AccessibleContext {
+        if (accessibleContext == null) {
+            accessibleContext = object : AccessibleJPanel() {
+                override fun getAccessibleName() = summary
+            }
+        }
+        return accessibleContext
     }
 
     @RequiresEdt
@@ -476,42 +760,220 @@ class MessageView(
     }
 
     @RequiresEdt
-    private fun wrapPrompt(view: PartView): JComponent {
+    private fun removeView(view: PartView) {
+        detach(view)
+        view.parent?.remove(view)
+    }
+
+    @RequiresEdt
+    private fun wrapPrompt(view: PartView): JComponent? {
         if (role != SessionUiStyle.View.Message.USER_ROLE) return view
         if (view !is PromptView) return view
         prompt = view
+        val node = ensurePromptWrap()
+        node.setPrompt(view)
+        node.bar.setActive(true)
+        return node.takeIf { it.parent == null }
+    }
+
+    @RequiresEdt
+    private fun ensurePromptWrap(): PromptWrap {
+        val existing = wrap
+        if (existing != null) return existing
         val box = JPanel(BorderLayout()).also {
             it.isOpaque = false
-            it.add(view, BorderLayout.CENTER)
             promptBox = it
         }
-        val node = PromptWrap(box)
-        wrap = node
-        node.bar.setActive(true)
-        return node
+        return PromptWrap(box).also { wrap = it }
+    }
+
+    // The bubble's SOUTH slot: a vertical stack the chips and notices both live in, so they sit
+    // inside the rounded prompt surface. Creates and attaches the prompt wrap when needed.
+    @RequiresEdt
+    private fun ensurePromptSouth(): Stack {
+        val existing = promptSouth
+        if (existing != null) return existing
+        val stack = Stack(StackAxis.VERTICAL)
+        val node = ensurePromptWrap()
+        promptBox?.add(stack, BorderLayout.SOUTH)
+        promptSouth = stack
+        if (node.parent == null) add(node, tail())
+        return stack
+    }
+
+    @RequiresEdt
+    private fun syncPromptSouth() {
+        val stack = promptSouth ?: return
+        if (stack.componentCount > 0) return
+        stack.parent?.remove(stack)
+        promptSouth = null
+    }
+
+    @RequiresEdt
+    private fun syncPromptWrap() {
+        val node = wrap ?: return
+        if (prompt != null || promptSouth != null) return
+        node.release()
+        node.parent?.remove(node)
+        wrap = null
+        promptBox = null
     }
 
     private inner class PromptWrap(
         private val box: JPanel,
     ) : JPanel(BorderLayout()), SessionCopyTarget {
+        private val footer = JPanel(BorderLayout()).also { it.isOpaque = false }
+        private val body = JPanel(BorderLayout())
         val bar = MessageToolbar(
             { prompt?.copyMarkdown(trim = false) },
             revert?.let { fn -> { fn(msg.info.id) } },
+            fork?.let { fn -> { fn(msg.info.id) } },
         )
         private val placeholder = bar.placeholder()
-        private var progress: RevertProgress? = null
         private var reverting = false
+        private var progress: RevertProgress? = null
+        private var queuedRow: JPanel? = null
+        private var queued = false
+        private var header: InjectedPromptHeader? = null
+        private var preview: TextView? = null
+        private var collapsed = false
+        private var hasPreview = false
 
         override val copyAnchor: JComponent get() = placeholder
-        override val copyToolbar: JComponent? get() = if (reverting) null else bar
+        override val copyToolbar: JComponent? get() = if (reverting || queued) null else bar
 
         init {
             isOpaque = false
+            body.isOpaque = false
+            box.add(body, BorderLayout.CENTER)
             add(box, BorderLayout.CENTER)
-            add(placeholder.align(HAlign.RIGHT, VAlign.TOP), BorderLayout.SOUTH)
+            footer.border = JBUI.Borders.emptyTop(UiStyle.Gap.xs())
+            footer.add(placeholder.align(HAlign.RIGHT, VAlign.TOP), BorderLayout.CENTER)
+            add(footer, BorderLayout.SOUTH)
         }
 
         override fun copyText(): String? = prompt?.copyMarkdown(trim = false)
+
+        @RequiresEdt
+        fun setPrompt(view: PromptView) {
+            body.removeAll()
+            body.add(view, BorderLayout.CENTER)
+            syncInjected()
+        }
+
+        @RequiresEdt
+        fun syncInjected() {
+            val text = prompt?.let { contents[it.contentId] as? Text }
+            val title = text?.injectedTitle
+            if (text == null || title == null) {
+                header?.let {
+                    box.remove(it)
+                    header = null
+                }
+                clearPreview()
+                collapsed = false
+                hasPreview = false
+                syncBody()
+                revalidate()
+                repaint()
+                return
+            }
+            val body = text.content.toString()
+            val next = injectedPreview(body)
+            hasPreview = next != null
+            val fresh = header == null
+            if (fresh && next != null) collapsed = true
+            if (!hasPreview) {
+                collapsed = false
+                clearPreview()
+            }
+            val node = header ?: InjectedPromptHeader { open ->
+                setCollapsed(!open)
+            }.also {
+                it.applyStyle(style)
+                box.add(it, BorderLayout.NORTH)
+                header = it
+            }
+            node.update(title, hasPreview, !collapsed)
+            if (next != null) ensurePreview(next)
+            syncBody()
+            revalidate()
+            repaint()
+        }
+
+        @RequiresEdt
+        fun setCollapsed(value: Boolean) {
+            collapsed = value && hasPreview
+            syncBody()
+            header?.update(
+                prompt?.let { contents[it.contentId] as? Text }?.injectedTitle.orEmpty(),
+                hasPreview,
+                !collapsed,
+            )
+            revalidate()
+            repaint()
+        }
+
+        @RequiresEdt
+        fun isCollapsed(): Boolean = collapsed
+
+        @RequiresEdt
+        fun applyStyle(style: SessionEditorStyle) {
+            header?.applyStyle(style)
+            preview?.applyStyle(style)
+        }
+
+        @RequiresEdt
+        fun release() {
+            body.removeAll()
+            clearPreview()
+            header?.let { box.remove(it) }
+            header = null
+        }
+
+        @RequiresEdt
+        private fun clearPreview() {
+            preview?.let {
+                body.remove(it)
+                Disposer.dispose(it)
+            }
+            preview = null
+        }
+
+        @RequiresEdt
+        private fun syncBody() {
+            val node = if (collapsed && preview != null) preview else prompt
+            if (node == null) {
+                body.removeAll()
+                return
+            }
+            if (node.parent !== body) {
+                body.removeAll()
+                body.add(node, BorderLayout.CENTER)
+            }
+            body.revalidate()
+            body.repaint()
+        }
+
+        @RequiresEdt
+        private fun ensurePreview(text: String) {
+            val node = preview
+            if (node != null) {
+                node.update(Text(node.contentId).apply { content.append(text) })
+                return
+            }
+            val view = TextView(
+                Text("injected-preview-${prompt?.contentId}").apply { content.append(text) },
+                transparent = true,
+            ).also {
+                it.applyStyle(style)
+                it.border = JBUI.Borders.empty(
+                    JBUI.scale(SessionUiStyle.View.Prompt.SHELL_VERTICAL_PADDING),
+                    JBUI.scale(SessionUiStyle.View.Prompt.SHELL_HORIZONTAL_PADDING),
+                )
+            }
+            preview = view
+        }
 
         @RequiresEdt
         fun setReverting(active: Boolean, text: String, onCancel: () -> Unit) {
@@ -523,20 +985,98 @@ class MessageView(
                 node.setText(text)
                 if (reverting) return
                 reverting = true
-                remove((layout as BorderLayout).getLayoutComponent(BorderLayout.SOUTH))
-                add(node.align(HAlign.LEFT, VAlign.TOP), BorderLayout.SOUTH)
+                swapFooter(node.align(HAlign.LEFT, VAlign.TOP))
                 revalidate()
                 repaint()
                 return
             }
             if (!reverting) return
             reverting = false
-            remove((layout as BorderLayout).getLayoutComponent(BorderLayout.SOUTH))
-            add(placeholder.align(HAlign.RIGHT, VAlign.TOP), BorderLayout.SOUTH)
+            swapFooter(placeholder.align(HAlign.RIGHT, VAlign.TOP))
             revalidate()
             repaint()
+        }
+
+        @RequiresEdt
+        fun setQueued(active: Boolean, onDelete: () -> Unit) {
+            if (active) {
+                val node = queuedRow ?: queue(onDelete).also { queuedRow = it }
+                if (queued) return
+                queued = true
+                swapFooter(node.align(HAlign.RIGHT, VAlign.TOP))
+                revalidate()
+                repaint()
+                return
+            }
+            if (!queued) return
+            queued = false
+            swapFooter(placeholder.align(HAlign.RIGHT, VAlign.TOP))
+            revalidate()
+            repaint()
+        }
+
+        private fun swapFooter(node: JComponent) {
+            footer.removeAll()
+            footer.add(node, BorderLayout.CENTER)
+        }
+
+        private fun queue(onDelete: () -> Unit) = Stack.horizontal(UiStyle.Gap.sm()).also { row ->
+            row.isOpaque = false
+            row.next(JBLabel(KiloBundle.message("session.queued")).apply {
+                foreground = SessionUiStyle.Text.Secondary.foreground()
+            })
+            row.next(toolbarButton(
+                ToolbarButtonAction(
+                    AllIcons.Actions.Close,
+                    KiloBundle.message("session.queued.remove"),
+                    onDelete,
+                ),
+            ))
         }
     }
 
     private fun assistantBorder() = JBUI.Borders.empty()
+
+    private companion object {
+        const val ACCESSIBILITY_SUMMARY_LIMIT = 160
+        private const val ACCESSIBILITY_SCAN_LIMIT = ACCESSIBILITY_SUMMARY_LIMIT * 4
+
+        private val FENCE = Regex("```[\\w+#.-]*")
+        private val IMAGE = Regex("!\\[([^]]*)]\\([^)]*\\)")
+        private val LINK = Regex("\\[([^]]*)]\\([^)]*\\)")
+        private val HTML = Regex("<[^>]+>")
+        private val HEADING = Regex("(?m)^#{1,6}\\s+")
+        private val QUOTE = Regex("(?m)^>\\s?")
+        private val LIST = Regex("(?m)^\\s*(?:[-*+]|\\d+\\.)\\s+")
+        private val CODE = Regex("`([^`]*)`")
+        private val BOLD = Regex("\\*\\*(.+?)\\*\\*|__(.+?)__")
+        private val ITALIC = Regex("(?<!\\w)\\*(?!\\s)(.+?)(?<!\\s)\\*(?!\\w)|(?<!\\w)_(?!\\s)(.+?)(?<!\\s)_(?!\\w)")
+        private val STRIKE = Regex("~~(.+?)~~")
+        private val RULE = Regex("(?m)^\\s*\\|?(?:\\s*:?-{3,}:?\\s*\\|)+\\s*$")
+        private val PIPE = Regex("\\|")
+        private val WHITESPACE = Regex("\\s+")
+
+        /** Condenses markdown to the plain text a screen reader should announce. */
+        fun plainText(markdown: String): String {
+            var text = FENCE.replace(markdown, "")
+            text = IMAGE.replace(text, "\$1")
+            text = LINK.replace(text, "\$1")
+            text = HTML.replace(text, " ")
+            text = HEADING.replace(text, "")
+            text = QUOTE.replace(text, "")
+            text = LIST.replace(text, "")
+            text = RULE.replace(text, "")
+            text = CODE.replace(text, "\$1")
+            text = BOLD.replace(text, "\$1\$2")
+            text = ITALIC.replace(text, "\$1\$2")
+            text = STRIKE.replace(text, "\$1")
+            text = PIPE.replace(text, " ")
+            return text.replace(WHITESPACE, " ").trim()
+        }
+
+        fun summarize(text: String): String {
+            if (text.length <= ACCESSIBILITY_SUMMARY_LIMIT) return text
+            return text.take(ACCESSIBILITY_SUMMARY_LIMIT - 3).trimEnd() + "..."
+        }
+    }
 }

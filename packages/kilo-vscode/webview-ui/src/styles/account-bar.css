@@ -34,11 +34,11 @@
 
 .klepa-account-balance-label {
   color: var(--vscode-descriptionForeground);
-  font-size: 12px;
+  font-size: var(--kilo-font-size-12);
 }
 
 .klepa-account-balance-value {
-  font-size: 12px;
+  font-size: var(--kilo-font-size-12);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -62,7 +62,7 @@
   border-radius: 2px;
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
-  font-size: 12px;
+  font-size: var(--kilo-font-size-12);
   cursor: pointer;
 }
 
