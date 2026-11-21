@@ -326,7 +326,7 @@ export const Info = Schema.Struct({
       // kilocode_change start
       image_generation: Schema.Boolean.pipe(Schema.optional, Schema.withDecodingDefault(Effect.succeed(true))).annotate({ description: "Enable AI image generation" }),
       image_generation_model: Schema.optional(Schema.String).annotate({
-        description: "Model ID to use for image generation (default: google/gemini-2.5-flash-image)",
+        description: "Model ID to use for image generation (default: google/gemini-3.1-flash-image-preview)",
       }),
       native_notebook_tools: Schema.optional(Schema.Boolean).annotate({
         description: "Enable native tools for reading, editing, and executing VS Code notebooks",
