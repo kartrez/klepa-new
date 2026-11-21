@@ -1,7 +1,4 @@
 import * as vscode from "vscode"
-import { integratedBrowserLinkDestination } from "./services/browser-automation/chrome-setting"
-
-const BROWSER_AUTOMATION = "kilo-code.new.experimental"
 
 /** True when the URL is an http(s) web link, which is all the browser handles. */
 export function isWebLink(url: string): boolean {
@@ -13,17 +10,9 @@ export function isWebLink(url: string): boolean {
   }
 }
 
-/**
- * In-app routing needs a trusted workspace, the experimental Integrated Browser
- * flag, the "integrated" destination, and an http(s) URL. Everything else stays
- * external so a link is never swallowed when the browser is unavailable.
- */
-export function shouldOpenLinkInIntegratedBrowser(url: string): boolean {
-  if (!vscode.workspace.isTrusted) return false
-  if (vscode.workspace.getConfiguration(BROWSER_AUTOMATION).get<boolean>("browserAutomation", false) !== true)
-    return false
-  if (integratedBrowserLinkDestination() !== "integrated") return false
-  return isWebLink(url)
+/** Integrated Browser is removed in Klepa; web links always open externally. */
+export function shouldOpenLinkInIntegratedBrowser(_url: string): boolean {
+  return false
 }
 
 /**

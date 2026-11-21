@@ -85,7 +85,7 @@ describe("buildChatSettingsMessage", () => {
         settings: {
           shiftTabCyclesVariant: true,
           agentManagerSplash: false,
-          browserAutomation: true,
+          browserAutomation: false,
           agentManagerBrowserOpenLinksIn: "external",
           workspaceTrusted: true,
         },

@@ -435,6 +435,7 @@ function getWebviewsConfig() {
   return {
     entryPoints: {
       "agent-manager": "webview-ui/agent-manager/index.tsx",
+      marketplace: "webview-ui/marketplace/index.tsx",
       "diff-viewer": "webview-ui/diff-viewer/index.tsx",
       documents: "webview-ui/documents/index.tsx",
       "diff-virtual": "webview-ui/diff-virtual/index.tsx",
@@ -510,7 +511,7 @@ function notices() {
 
 async function main() {
   notices()
-  for (const stale of ["dotlottie-player.wasm", "browser-tab.js", "browser-tab.js.map", "browser-tab.css", "marketplace.js", "marketplace.js.map", "marketplace.css", "kiloclaw.js"]) {
+  for (const stale of ["dotlottie-player.wasm", "browser-tab.js", "browser-tab.js.map", "browser-tab.css", "kiloclaw.js"]) {
     fs.rmSync(path.join(__dirname, "dist", stale), { force: true })
   }
   // Chunk hashes change between builds. Do not package stale Settings chunks.

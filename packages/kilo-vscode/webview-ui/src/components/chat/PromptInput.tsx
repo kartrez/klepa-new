@@ -2250,9 +2250,9 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
           </div>
           <div class="prompt-action" data-folded={folded("approve") ? "" : undefined}>
             <Tooltip
-              value={`${language.t(
+              value={language.t(
                 autoApprove() ? "prompt.action.autoApprove.enabled" : "prompt.action.autoApprove.disabled",
-              )} ${language.t("prompt.action.autoApprove.sandboxExcluded")}`}
+              )}
               placement="top"
               openDelay={0}
             >

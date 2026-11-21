@@ -9,6 +9,7 @@ import { DocumentViewerProvider } from "./DocumentViewerProvider"
 import { DiffSourceCatalog } from "./diff/sources/catalog"
 import { DiffVirtualProvider } from "./DiffVirtualProvider"
 import { SettingsEditorProvider } from "./SettingsEditorProvider"
+import { MarketplacePanelProvider } from "./MarketplacePanelProvider"
 import { SubAgentViewerProvider } from "./SubAgentViewerProvider"
 import { EXTENSION_DISPLAY_NAME } from "./constants"
 import { KiloConnectionService } from "./services/cli-backend"
@@ -352,7 +353,8 @@ export async function activate(context: vscode.ExtensionContext) {
   const settingsEditorProvider = new SettingsEditorProvider(context.extensionUri, connectionService, context, {
     ...agentManagerProvider.settings,
   })
-  context.subscriptions.push(settingsEditorProvider)
+  const marketplacePanelProvider = new MarketplacePanelProvider(context.extensionUri, connectionService, context)
+  context.subscriptions.push(settingsEditorProvider, marketplacePanelProvider)
 
   // Create sub-agent viewer provider (read-only editor panel for sub-agent sessions)
   const subAgentViewerProvider = new SubAgentViewerProvider(context.extensionUri, connectionService, context)
@@ -363,6 +365,15 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.registerWebviewPanelSerializer("kilo-code.new.settingsPanel", {
       deserializeWebviewPanel(panel: vscode.WebviewPanel) {
         settingsEditorProvider.deserializePanel(panel)
+        return Promise.resolve()
+      },
+    }),
+  )
+
+  context.subscriptions.push(
+    vscode.window.registerWebviewPanelSerializer(MarketplacePanelProvider.viewType, {
+      deserializeWebviewPanel(panel: vscode.WebviewPanel) {
+        marketplacePanelProvider.deserializePanel(panel)
         return Promise.resolve()
       },
     }),
@@ -429,6 +440,9 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("kilo-code.new.sidebarTitle.agentManagerOpen", () => {
       track("agent_manager", "kilo-code.new.agentManagerOpen")
     }),
+    vscode.commands.registerCommand("kilo-code.new.sidebarTitle.marketplaceButtonClicked", () => {
+      track("marketplace", "kilo-code.new.marketplaceButtonClicked")
+    }),
     vscode.commands.registerCommand("kilo-code.new.sidebarTitle.settingsButtonClicked", () => {
       track("settings", "kilo-code.new.settingsButtonClicked")
     }),
@@ -445,6 +459,9 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand("kilo-code.new.agentManagerOpen", () => {
       agentManagerProvider.openPanel()
+    }),
+    vscode.commands.registerCommand("kilo-code.new.marketplaceButtonClicked", (directory?: string | null) => {
+      marketplacePanelProvider.openPanel(directory)
     }),
     vscode.commands.registerCommand("kilo-code.new.historyButtonClicked", () => {
       const tab = activeTabProvider()

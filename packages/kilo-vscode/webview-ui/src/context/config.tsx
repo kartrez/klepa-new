@@ -111,7 +111,7 @@ export const ConfigProvider: ParentComponent = (props) => {
     autocomplete: false,
     backgroundSubagents: false,
     speechToText: false,
-    marketplace: false,
+    marketplace: true,
     remoteControl: false,
     integratedBrowser: false,
     projectMemory: false,

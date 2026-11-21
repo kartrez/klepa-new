@@ -33,15 +33,15 @@ describe("Chat link destination", () => {
     return external
   }
 
-  test("opens in the Integrated Browser when the opener accepts the link", async () => {
+  test("always opens links externally even when legacy browserAutomation settings are enabled", async () => {
     const external = setup()
     const opened: string[] = []
     await openBrowserLink("https://example.com", () => {
       opened.push("https://example.com")
       return true
     })
-    expect(opened).toEqual(["https://example.com"])
-    expect(external).toEqual([])
+    expect(opened).toEqual([])
+    expect(external).toEqual(["https://example.com"])
   })
 
   test("falls back to the system browser when the opener cannot take the link", async () => {

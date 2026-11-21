@@ -114,6 +114,14 @@ export const ProviderProvider: ParentComponent = (props) => {
     if (message.type !== "providersLoaded") return
 
     batch(() => {
+      if (
+        klepaOut() &&
+        message.ready !== false &&
+        message.authStates?.[GPT_CHAT_BY_PROVIDER_ID] === undefined &&
+        message.authStates?.["gpt-chat-by"] === undefined
+      ) {
+        setKlepaOut(false)
+      }
       setProviders(message.providers)
       setConnected(message.connected)
       setDefaults(message.defaults)

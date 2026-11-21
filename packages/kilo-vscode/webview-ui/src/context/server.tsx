@@ -15,6 +15,7 @@ import type {
 } from "../types/messages"
 import { applyFontSize } from "../font-size"
 import { KLEPA_LOGOUT_EVENT } from "../klepa-auth-events"
+import { GPT_CHAT_BY_PROVIDER_ID } from "../../../src/shared/gpt-chat-by"
 
 interface ServerContextValue {
   connectionState: Accessor<ConnectionState>
@@ -186,6 +187,17 @@ function handleGptAuthMessage(message: ExtensionMessage, signals: ServerSignals)
     return true
   }
 
+  if (
+    message.type === "providersLoaded" &&
+    message.ready !== false &&
+    message.authStates?.[GPT_CHAT_BY_PROVIDER_ID] === undefined &&
+    message.authStates?.["gpt-chat-by"] === undefined
+  ) {
+    signals.setGptAuthed(false)
+    signals.setBalance(undefined)
+    return true
+  }
+
   return false
 }
 
@@ -232,10 +244,7 @@ export const ServerProvider: ParentComponent = (props) => {
     if (m.reset) {
       setProviderUsage(undefined)
       setProviderUsageError(undefined)
-      // The reset itself means previous account/project usage was invalidated:
-      // never show it again, and reload once via the cache-aware endpoint.
-      setProviderUsageLoading(true)
-      vscode.postMessage({ type: "requestProviderUsage" })
+      setProviderUsageLoading(false)
       return
     }
     if (m.data) setProviderUsage(m.data)
@@ -247,8 +256,7 @@ export const ServerProvider: ParentComponent = (props) => {
     if (providerUsage() === undefined && !providerUsageLoading()) return
     setProviderUsage(undefined)
     setProviderUsageError(undefined)
-    setProviderUsageLoading(true)
-    vscode.postMessage({ type: "requestProviderUsage" })
+    setProviderUsageLoading(false)
   }
 
   onMount(() => {
@@ -324,15 +332,11 @@ export const ServerProvider: ParentComponent = (props) => {
   }
 
   const requestProviderUsage = () => {
-    setProviderUsageLoading(true)
-    setProviderUsageError(undefined)
-    vscode.postMessage({ type: "requestProviderUsage" })
+    setProviderUsageLoading(false)
   }
 
   const refreshProviderUsage = () => {
-    setProviderUsageLoading(true)
-    setProviderUsageError(undefined)
-    vscode.postMessage({ type: "refreshProviderUsage" })
+    setProviderUsageLoading(false)
   }
 
   const value: ServerContextValue = {

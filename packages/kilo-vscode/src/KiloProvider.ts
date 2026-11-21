@@ -1452,6 +1452,7 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
           break
         case "logout":
           this.storedProviderKeys = {}
+          this.gptChatByAuthToken = undefined
           await handleLogout(this.authCtx)
           await this.fetchAndSendProviders().catch((error) => {
             console.warn("[Kilo New] KiloProvider: fetchAndSendProviders after logout failed:", error)
@@ -1466,6 +1467,7 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
           await openConfig(message.scope, message.labels, this.getProjectDirectory(this.currentSession?.id))
           break
         case "openMarketplacePanel":
+          this.openMarketplacePanel(message.directory)
           break
         case "forkSession":
           handleForkSession(this.forkCtx, message.sessionId, message.messageId).catch((e) =>
@@ -2816,6 +2818,7 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
             continue
           }
           this.storedProviderKeys = storedKeys
+          if (!storedKeys[GPT_CHAT_BY_PROVIDER_ID]) this.gptChatByAuthToken = undefined
           const settings = vscode.workspace.getConfiguration("kilo-code.new.model")
           const message = {
             type: "providersLoaded",
@@ -4271,7 +4274,7 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
       .get<boolean>("conversationPromptHistory", false)
   }
   private browserAutomationSetting(): boolean {
-    return vscode.workspace.getConfiguration("kilo-code.new.experimental").get<boolean>("browserAutomation", false)
+    return false
   }
 
   private async sendIndexingSettings(projectId?: string) {
@@ -5079,7 +5082,14 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
 
   private async handleRefreshBalance() {
     const client = this.client
-    if (!client) return
+    if (!client) {
+      this.postMessage({
+        type: "balanceData",
+        balance: null,
+        error: "Not connected to CLI backend",
+      })
+      return
+    }
 
     const dir = this.getWorkspaceDirectory()
     try {

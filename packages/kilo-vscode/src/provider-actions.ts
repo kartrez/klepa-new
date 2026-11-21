@@ -51,6 +51,18 @@ function same(a: unknown, b: unknown): boolean {
   return akeys.every((key, index) => key === bkeys[index] && same(a[key], b[key]))
 }
 
+function resolveKiloOrganizationId(
+  includeKilo: boolean,
+  kiloAuth: { organizationId?: string | null } | undefined,
+): string | null | undefined {
+  if (!includeKilo) return null
+  return kiloAuth ? (kiloAuth.organizationId ?? null) : undefined
+}
+
+function isProviderCatalogReady(includeKilo: boolean, kiloAuth: unknown): boolean {
+  return !includeKilo || !!kiloAuth
+}
+
 /** Fetch provider availability and authentication state without exposing stored credentials. */
 export async function fetchProviderData(client: KiloClient, dir: string, includeKilo = true) {
   const authRequest =
@@ -95,7 +107,7 @@ export async function fetchProviderData(client: KiloClient, dir: string, include
   })
   delete authStates[KILO_PROVIDER_ID]
   if (kiloAuth?.authenticated && kiloAuth.type) authStates[KILO_PROVIDER_ID] = kiloAuth.type
-  const organizationId = kiloAuth ? (kiloAuth.organizationId ?? null) : undefined
+  const organizationId = resolveKiloOrganizationId(includeKilo, kiloAuth)
   const defaults = { ...response.default }
   if (organizationId) {
     const models = all.find((item) => item.id === KILO_PROVIDER_ID)?.models ?? {}
@@ -116,7 +128,7 @@ export async function fetchProviderData(client: KiloClient, dir: string, include
     authStates,
     storedKeys,
     organizationId,
-    ready: !!kiloAuth,
+    ready: isProviderCatalogReady(includeKilo, kiloAuth),
     unavailable: catalogUnavailable(response.failed, all, organizationId),
   }
 }

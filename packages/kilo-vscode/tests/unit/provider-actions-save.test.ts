@@ -861,6 +861,54 @@ describe("fetchProviderData", () => {
     expect(result.authStates).toEqual({})
     expect(result.storedKeys).toEqual({})
   })
+
+  it("returns ready=true and organizationId=null when includeKilo is false and klepa is logged out", async () => {
+    let authStatusCalls = 0
+    const client = {
+      provider: {
+        list: async () => ({
+          data: {
+            all: [
+              {
+                id: "kilo",
+                name: "Kilo",
+                source: "api",
+                env: [],
+                options: {},
+                models: { "kilo/auto": { name: "Auto" } },
+              },
+              {
+                id: "klepa",
+                name: "Klepa",
+                source: "api",
+                env: [],
+                options: {},
+                models: { "klepa/auto": { name: "Auto" } },
+              },
+            ],
+            connected: ["kilo", "klepa"],
+            default: { kilo: "kilo/auto", klepa: "klepa/auto" },
+          },
+        }),
+        auth: async () => ({ data: {} }),
+      },
+      kilo: {
+        authStatus: async () => {
+          authStatusCalls++
+          return { data: { authenticated: true } }
+        },
+      },
+    } as unknown as Parameters<typeof fetchProviderData>[0]
+
+    const result = await fetchProviderData(client, "/tmp", false)
+
+    expect(authStatusCalls).toBe(0)
+    expect(result.ready).toBe(true)
+    expect(result.organizationId).toBeNull()
+    expect(result.authStates).toEqual({})
+    expect(result.response.all.map((p) => p.id)).toEqual(["klepa"])
+    expect(result.response.connected).toEqual(["klepa"])
+  })
 })
 
 describe("resolveStoredKey", () => {

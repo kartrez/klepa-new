@@ -12,9 +12,7 @@ export function buildChatSettingsMessage() {
       agentManagerSplash:
         vscode.workspace.getConfiguration("kilo-code.new.experimental").get<boolean>("agentManagerSplash", false) ===
         true,
-      browserAutomation: vscode.workspace
-        .getConfiguration("kilo-code.new.experimental")
-        .get("browserAutomation", false),
+      browserAutomation: false,
       agentManagerBrowserOpenLinksIn: integratedBrowserLinkDestination(),
       workspaceTrusted: vscode.workspace.isTrusted,
     },
