@@ -54,10 +54,7 @@ export const MemoryProvider: ParentComponent = (props) => {
   }
 
   const refresh = () => {
-    if (!server.isConnected()) return
-    setLoading(true)
-    setError(undefined)
-    vscode.postMessage({ type: "requestMemory", sessionID: id() })
+    setLoading(false)
   }
 
   const operation = (op: "enable" | "disable") => {

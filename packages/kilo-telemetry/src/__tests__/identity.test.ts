@@ -1,89 +1,73 @@
-import { mkdtempSync, readFileSync, existsSync, statSync } from "node:fs"
+import { mkdtempSync, existsSync, statSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { describe, test, expect, beforeEach, mock, afterEach } from "bun:test"
-import { createHash } from "node:crypto"
-
-let profileCalls = 0
-mock.module("@kilocode/kilo-gateway", () => ({
-  fetchProfile: async (token: string) => {
-    profileCalls++
-    if (token === "bad-token") return null
-    return { email: `user-${token}@example.com` }
-  },
-}))
-
-const { Identity } = await import("../identity.js")
-
-function digest(token: string) {
-  return createHash("sha256").update(token).digest("hex")
-}
+import { describe, test, expect, beforeEach, afterEach } from "bun:test"
+import { Identity } from "../identity.js"
 
 let dir: string
+const originalMachineId = process.env.KILO_MACHINE_ID
 
 beforeEach(() => {
-  profileCalls = 0
+  delete process.env.KILO_MACHINE_ID
   dir = mkdtempSync(path.join(tmpdir(), "kilo-telemetry-identity-"))
   Identity.reset()
   Identity.setDataPath(dir)
 })
 
 afterEach(() => {
+  if (originalMachineId === undefined) delete process.env.KILO_MACHINE_ID
+  else process.env.KILO_MACHINE_ID = originalMachineId
+  Identity.reset()
   Identity.setDataPath("")
+  rmSync(dir, { recursive: true, force: true })
 })
 
-describe("Identity.updateFromKiloAuth profile cache", () => {
-  test("fetches profile and writes cache keyed by token hash", async () => {
-    await Identity.updateFromKiloAuth("token-a")
-    expect(Identity.getUserId()).toBe("user-token-a@example.com")
-    expect(profileCalls).toBe(1)
+describe("Identity (in-memory Klepa auth + local installation ID)", () => {
+  test("persists machineId to telemetry-id and never creates telemetry-profile.json", async () => {
+    const first = await Identity.getMachineId()
+    expect(first).toBeTruthy()
+    expect(existsSync(path.join(dir, "telemetry-id"))).toBe(true)
+    expect(existsSync(path.join(dir, "telemetry-profile.json"))).toBe(false)
 
-    const file = path.join(dir, "telemetry-profile.json")
-    expect(existsSync(file)).toBe(true)
-    const cache = JSON.parse(readFileSync(file, "utf8"))
-    expect(cache.token).toBe(digest("token-a"))
-    expect(cache.email).toBe("user-token-a@example.com")
-    expect(cache.token).not.toBe("token-a")
-    // The cache stores an email and a token verifier, so it must be owner-only.
-    // POSIX only: Windows reports default mode bits and enforces access via ACLs.
-    if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600)
+    Identity.reset()
+    const second = await Identity.getMachineId()
+    expect(second).toBe(first)
+    expect(Identity.getDistinctId()).toBe(first!)
   })
 
-  test("uses cached email without a network request on later invocations", async () => {
-    await Identity.updateFromKiloAuth("token-a")
-    expect(profileCalls).toBe(1)
-
-    // Simulate a fresh process: identity state resets, cache file persists.
-    Identity.reset()
-    await Identity.updateFromKiloAuth("token-a")
-    expect(Identity.getUserId()).toBe("user-token-a@example.com")
-    expect(profileCalls).toBe(1)
+  test("honors KILO_MACHINE_ID override", async () => {
+    process.env.KILO_MACHINE_ID = "custom-vscode-machine-id-1234"
+    expect(await Identity.getMachineId()).toBe("custom-vscode-machine-id-1234")
+    expect(Identity.getInstallationId()).toBe("custom-vscode-machine-id-1234")
   })
 
-  test("refetches when the token changes", async () => {
-    await Identity.updateFromKiloAuth("token-a")
-    Identity.reset()
-    await Identity.updateFromKiloAuth("token-b")
-    expect(Identity.getUserId()).toBe("user-token-b@example.com")
-    expect(profileCalls).toBe(2)
+  test("falls back to a valid UUID when machineId is absent or invalid for installationId", async () => {
+    const fallback = Identity.getInstallationId()
+    expect(fallback).toMatch(/^[a-zA-Z0-9._-]{8,64}$/)
+
+    process.env.KILO_MACHINE_ID = "tiny"
+    await Identity.getMachineId()
+    const second = Identity.getInstallationId()
+    expect(second).toMatch(/^[a-zA-Z0-9._-]{8,64}$/)
+    expect(second).not.toBe("tiny")
   })
 
-  test("clears identity when token is null", async () => {
-    await Identity.updateFromKiloAuth("token-a")
-    Identity.reset()
-    await Identity.updateFromKiloAuth(null)
+  test("stores auth token in memory only and updates via updateFromKiloAuth without network or disk writes", async () => {
+    await Identity.updateFromKiloAuth("  sk-klepa-token  ", "org-1")
+    expect(Identity.getAuthToken()).toBe("sk-klepa-token")
+    expect(Identity.getOrganizationId()).toBe("org-1")
     expect(Identity.getUserId()).toBeNull()
-    expect(profileCalls).toBe(1)
-  })
+    expect(existsSync(path.join(dir, "telemetry-profile.json"))).toBe(false)
 
-  test("ignores a cache file for a different token", async () => {
-    await Identity.updateFromKiloAuth("token-a")
-    const file = path.join(dir, "telemetry-profile.json")
-    const cache = JSON.parse(readFileSync(file, "utf8"))
-    expect(cache.token).toBe(digest("token-a"))
+    Identity.setAuthToken("   ")
+    expect(Identity.getAuthToken()).toBeNull()
 
-    Identity.reset()
-    await Identity.updateFromKiloAuth("token-b")
-    expect(Identity.getUserId()).toBe("user-token-b@example.com")
+    await Identity.updateFromKiloAuth("sk-next")
+    expect(Identity.getAuthToken()).toBe("sk-next")
+    expect(Identity.getOrganizationId()).toBeNull()
+
+    await Identity.updateFromKiloAuth(null)
+    expect(Identity.getAuthToken()).toBeNull()
+    expect(statSync(dir).isDirectory()).toBe(true)
   })
 })

@@ -4,7 +4,6 @@ import * as crypto from "crypto"
 import * as fs from "fs"
 import * as path from "path"
 import * as vscode from "vscode"
-import { resolveLocalBwrapEnv, resolveTreeSitterEnv } from "./cli-resources"
 import { t } from "./i18n"
 import { GPT_CHAT_BY_DEFAULT_CONFIG } from "../../shared/gpt-chat-by"
 import { ensureServerCwd, scanServerPort } from "./server-utils"
@@ -101,20 +100,11 @@ export class ServerManager {
       console.log("[Kilo New] ServerManager: 🎬 Spawning CLI process:", cliPath, ["serve", "--port", "0"])
       const cfg = vscode.workspace.getConfiguration("kilo-code.new")
       const claudeCompat = cfg.get<boolean>("claudeCodeCompat", false)
-      const claudeMigration = resolveClaudeMigrationEnv(
-        { ...process.env, ...(extraEnv ?? {}) },
-        cfg.get<boolean>("experimental.claudeMigration", false),
-      )
       // Pin cwd so the CLI doesn't inherit the extension host's cwd ("/" under F5 debug)
       // or "$HOME" in empty VS Code windows.
       const folders = vscode.workspace.workspaceFolders
       const spawnCwd = resolveServerCwd(folders, this.context.globalStorageUri.fsPath)
       ensureServerCwd(spawnCwd)
-      const indexingEnv = resolveIndexingEnv(folders)
-      const localCli =
-        this.context.extensionMode === vscode.ExtensionMode.Development ||
-        fs.existsSync(path.join(this.context.extensionPath, "bin", ".cli-version"))
-      const bwrapEnv = process.env.KILO_BWRAP_PATH ? {} : resolveLocalBwrapEnv(this.context.extensionPath, localCli)
       // TLS / corporate-proxy support:
       //   - Default NODE_USE_SYSTEM_CA=1 so the bundled Bun CLI trusts the OS
       //     trust store (Windows cert store, macOS keychain, Linux /etc/ssl).
@@ -154,8 +144,11 @@ export class ServerManager {
           KILO_CLIENT: "vscode",
           KILO_ENABLE_QUESTION_TOOL: "true",
           KILOCODE_FEATURE: "vscode-extension",
-          ...indexingEnv,
-          KILO_APP_NAME: "kilo-code",
+          KILO_DISABLE_CODEBASE_INDEXING: "true",
+          KILO_DISABLE_MODELS_FETCH: "1",
+          KILO_DISABLE_SESSION_INGEST: "1",
+          KILO_DISABLE_PRESENCE: "1",
+          KILO_APP_NAME: "klepa-vscode",
           KILO_EDITOR_NAME: vscode.env.appName,
           KILO_PLATFORM: "vscode",
           KILO_MACHINE_ID: vscode.env.machineId,
@@ -165,11 +158,8 @@ export class ServerManager {
           KILOCODE_EDITOR_NAME: `${vscode.env.appName} ${vscode.version}`,
           KILO_CONFIG_CONTENT: JSON.stringify(GPT_CHAT_BY_DEFAULT_CONFIG),
           ...(!claudeCompat && { KILO_DISABLE_CLAUDE_CODE: "true" }),
-          ...resolveTreeSitterEnv(this.context.extensionPath),
-          ...bwrapEnv,
           ...extraEnv,
           KILO_TELEMETRY_HOST_DISABLED: vscode.env.isTelemetryEnabled ? "0" : "1",
-          KILO_EXPERIMENTAL_CLAUDE_MIGRATION: claudeMigration,
         },
         stdio: ["ignore", "pipe", "pipe"],
         detached: true,

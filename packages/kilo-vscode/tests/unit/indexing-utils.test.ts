@@ -121,40 +121,15 @@ describe("indexing SSE mapping", () => {
 })
 
 describe("indexing feature detection", () => {
-  it("keeps background subagent capability disabled unless the server reports it", () => {
+  it("disables optional capabilities unconditionally in Klepa AI VS Code", () => {
     expect(configFeatures().backgroundSubagents).toBe(false)
-    expect(configFeatures({}, true).backgroundSubagents).toBe(true)
-  })
-
-  it("disables speech input capture in remote windows", () => {
-    expect(configFeatures().speechToText).toBe(true)
-    expect(configFeatures({}, false, true).speechToText).toBe(false)
-    expect(configFeatures({}, false, false).speechToText).toBe(true)
-  })
-
-  it("enables indexing settings when the indexing plugin is present", () => {
-    expect(configFeatures({ plugin: ["kilo-indexing"] }).indexing).toBe(true)
-  })
-
-  it("detects supported indexing plugin specifiers", () => {
-    expect(configFeatures({ plugin: ["kilo-indexing"] }).indexing).toBe(true)
-    expect(configFeatures({ plugin: ["kilo-indexing@1.2.3"] }).indexing).toBe(true)
-    expect(configFeatures({ plugin: ["@kilocode/kilo-indexing"] }).indexing).toBe(true)
-    expect(configFeatures({ plugin: ["@kilocode/kilo-indexing@1.2.3"] }).indexing).toBe(true)
-    expect(configFeatures({ plugin: ["file:///tmp/.opencode/plugin/kilo-indexing.js"] }).indexing).toBe(true)
-    expect(configFeatures({ plugin: ["file:///tmp/node_modules/@kilocode/kilo-indexing/index.js"] }).indexing).toBe(
-      true,
-    )
-  })
-
-  it("ignores unrelated plugin lists", () => {
-    expect(configFeatures({ plugin: ["@kilocode/kilo-gateway"] }).indexing).toBe(false)
-    expect(configFeatures({ plugin: ["file:///tmp/.opencode/plugin/index.js"] }).indexing).toBe(false)
-    expect(configFeatures({}).indexing).toBe(false)
-  })
-
-  it("disables autocomplete in the Klepa fork", () => {
+    expect(configFeatures({}, true).backgroundSubagents).toBe(false)
+    expect(configFeatures().speechToText).toBe(false)
+    expect(configFeatures({}, false, false).speechToText).toBe(false)
+    expect(configFeatures({ plugin: ["kilo-indexing"] }).indexing).toBe(false)
+    expect(configFeatures({ plugin: ["@kilocode/kilo-indexing@1.2.3"] }).indexing).toBe(false)
     expect(configFeatures({}).autocomplete).toBe(false)
+    expect(configFeatures().sandboxControls).toBe(false)
   })
 })
 

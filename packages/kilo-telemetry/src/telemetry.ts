@@ -1,6 +1,5 @@
 import { release } from "node:os"
 import { Client } from "./client.js"
-import { Conda } from "./conda.js"
 import { Identity } from "./identity.js"
 import { TelemetryEvent } from "./events.js"
 
@@ -13,7 +12,6 @@ export interface TelemetryProperties {
   os_arch: string
   editorName?: string
   vscodeVersion?: string
-  aauClientToken?: string
 }
 
 export type ReviewCommand = "review"
@@ -105,15 +103,24 @@ export interface MarketplaceItemProperties extends Record<string, unknown> {
 export namespace Telemetry {
   let initialized = false
   let startTime = 0
-  let probe = 0
   let host: boolean | undefined
   let props: TelemetryProperties = {
-    appName: "kilo-cli",
+    appName: "klepa-cli",
     appVersion: "unknown",
     platform: process.platform,
     os_name: process.platform,
     os_version: release(),
     os_arch: process.arch,
+  }
+
+  function resolveClient(): "vscode" | "cli" {
+    if (process.env.KILO_PLATFORM === "vscode" || process.env.KILO_CLIENT === "vscode") {
+      return "vscode"
+    }
+    if (props.appName.toLowerCase().includes("vscode")) {
+      return "vscode"
+    }
+    return "cli"
   }
 
   export async function init(options: { dataPath: string; version: string; enabled: boolean }): Promise<void> {
@@ -134,17 +141,30 @@ export namespace Telemetry {
     if (vscodeVersion) props.vscodeVersion = vscodeVersion
 
     Client.init(options.dataPath)
+    Client.setMeta({
+      client: resolveClient(),
+      appVersion: props.appVersion,
+      os: props.os_name,
+      arch: props.os_arch,
+      editorVersion: props.vscodeVersion,
+    })
 
     const enabled = level(options.enabled)
     Client.setEnabled(enabled)
 
-    await Promise.all([Identity.getMachineId(), enabled ? refreshConda() : Promise.resolve()])
+    await Identity.getMachineId()
 
     initialized = true
     startTime = Date.now()
   }
 
   export function level(configured: boolean): boolean {
+    const dnt = process.env.DO_NOT_TRACK?.trim().toLowerCase()
+    if (dnt === "1" || dnt === "true") return false
+
+    const klepa = process.env.KLEPA_ANALYTICS?.trim().toLowerCase()
+    if (klepa === "0" || klepa === "false") return false
+
     const env = process.env.KILO_TELEMETRY_LEVEL?.trim().toLowerCase()
     const allowed = !env || env === "all" || env === "on" || env === "true" || env === "1"
     return configured && allowed && (host ?? process.env.KILO_TELEMETRY_HOST_DISABLED !== "1")
@@ -160,55 +180,27 @@ export namespace Telemetry {
     const enabled = level(configured)
     if (enabled === Client.isEnabled()) return enabled
     Client.setEnabled(enabled)
-    delete props.aauClientToken
-    if (enabled) void refreshConda()
-    else probe++
     return enabled
-  }
-
-  async function refreshConda() {
-    const current = ++probe
-    const token = await Conda.clientToken()
-    if (current !== probe || !Client.isEnabled()) return
-    if (token) props.aauClientToken = token
   }
 
   export function isEnabled(): boolean {
     return Client.isEnabled()
   }
 
+  export function setAuthToken(token: string | null): void {
+    Identity.setAuthToken(token)
+  }
+
   export async function updateIdentity(token: string | null, accountId?: string): Promise<void> {
-    if (!isEnabled()) return
-
-    const previousId = Identity.getDistinctId()
     await Identity.updateFromKiloAuth(token, accountId)
-
-    const email = Identity.getUserId()
-    if (email && previousId && email !== previousId) {
-      // Link the anonymous machineId to the authenticated email
-      Client.alias(email, previousId)
-    }
   }
 
   export function track(event: TelemetryEvent, properties?: Record<string, unknown>) {
-    const org = Identity.getOrganizationId()
-    const data = { ...properties }
-    delete data.aauClientToken
     Client.capture(event, {
-      ...props,
-      ...data,
-      ...(Identity.getUserId() &&
-        (event === TelemetryEvent.CLI_START || event === TelemetryEvent.AUTH_SUCCESS) && {
-          $set: {
-            ...(org && { kilocodeOrganizationId: org }),
-            appName: props.appName,
-            appVersion: props.appVersion,
-            platform: props.platform,
-            os_name: props.os_name,
-            os_version: props.os_version,
-            os_arch: props.os_arch,
-          },
-        }),
+      os_name: props.os_name,
+      os_arch: props.os_arch,
+      ...(props.vscodeVersion && { vscodeVersion: props.vscodeVersion }),
+      ...properties,
     })
   }
 
@@ -217,15 +209,13 @@ export namespace Telemetry {
     track(TelemetryEvent.CLI_START)
   }
 
-  // Upload queued events without blocking. Call after bootstrap so the flush
-  // overlaps with command execution and shutdown() stays fast (#10242).
   export function flushInBackground() {
     Client.flushInBackground()
   }
 
   export function trackCliExit(exitCode?: number) {
     track(TelemetryEvent.CLI_EXIT, {
-      duration: Date.now() - startTime,
+      durationMs: Math.max(0, Date.now() - startTime),
       exitCode,
     })
   }
@@ -399,11 +389,16 @@ export namespace Telemetry {
     parentMessageID?: string
   }
 
-  export function trackFeedback(props: FeedbackProperties) {
-    track(TelemetryEvent.FEEDBACK_SUBMITTED, props)
+  export function trackFeedback(feedbackProps: FeedbackProperties) {
+    track(TelemetryEvent.FEEDBACK_SUBMITTED, feedbackProps)
   }
 
   export async function shutdown(timeoutMs?: number): Promise<void> {
-    await Client.shutdown(timeoutMs)
+    try {
+      await Client.shutdown(timeoutMs)
+    } finally {
+      initialized = false
+      host = undefined
+    }
   }
 }

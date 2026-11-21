@@ -9,19 +9,21 @@ import type {
 import { Config } from "@/config/config"
 import { createKiloClient } from "@kilocode/sdk"
 import { ServerAuth } from "@/server/auth"
-import { CodexAuthPlugin } from "./openai/codex"
+// kilocode_change start - restrict built-in auth plugins to Klepa (third-party providers disabled)
+// import { CodexAuthPlugin } from "./openai/codex"
+// import { CopilotAuthPlugin } from "./github-copilot/copilot"
+// import { ModalPlugin } from "./modal/modal"
+// import { gitlabAuthPlugin as GitlabAuthPlugin } from "opencode-gitlab-auth"
+// import { PoeAuthPlugin } from "opencode-poe-auth"
+// import { CloudflareAIGatewayAuthPlugin, CloudflareWorkersAuthPlugin } from "./cloudflare"
+// import { AzureAuthPlugin } from "./azure"
+// import { DigitalOceanAuthPlugin } from "./digitalocean"
+// import { XaiAuthPlugin } from "./xai"
+// import { CerebrasPlugin } from "./cerebras"
+// import { SnowflakeCortexAuthPlugin } from "./snowflake-cortex"
+// kilocode_change end
 import { Session } from "@/session/session"
 import { NamedError } from "@opencode-ai/core/util/error"
-import { CopilotAuthPlugin } from "./github-copilot/copilot"
-import { ModalPlugin } from "./modal/modal"
-import { gitlabAuthPlugin as GitlabAuthPlugin } from "opencode-gitlab-auth"
-import { PoeAuthPlugin } from "opencode-poe-auth"
-import { CloudflareAIGatewayAuthPlugin, CloudflareWorkersAuthPlugin } from "./cloudflare"
-import { AzureAuthPlugin } from "./azure"
-import { DigitalOceanAuthPlugin } from "./digitalocean"
-import { XaiAuthPlugin } from "./xai"
-import { CerebrasPlugin } from "./cerebras"
-import { SnowflakeCortexAuthPlugin } from "./snowflake-cortex"
 import { Effect, Layer, Context } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
@@ -29,8 +31,8 @@ import { errorMessage } from "@/util/error"
 import { PluginLoader } from "./loader"
 import { parsePluginSpecifier, readPluginId, readV1Plugin, resolvePluginId } from "./shared"
 import { GptChatByAuthPlugin } from "@/kilocode/provider/gpt-chat-by-auth" // kilocode_change
-import { AtomicChatPlugin } from "@kilocode/plugin-atomic-chat" // kilocode_change
-import { AnacondaDesktopPlugin } from "@/kilocode/anaconda-desktop/provider" // kilocode_change
+// import { AtomicChatPlugin } from "@kilocode/plugin-atomic-chat" // kilocode_change
+// import { AnacondaDesktopPlugin } from "@/kilocode/anaconda-desktop/provider" // kilocode_change
 import { registerAdapter } from "@/control-plane/adapters"
 import type { WorkspaceAdapter } from "@/control-plane/types"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -67,30 +69,28 @@ export function experimentalWebSocketsEnabled(input: { enabled: boolean; channel
 }
 
 // Built-in plugins that are directly imported (not installed from npm)
-function internalPlugins(flags: RuntimeFlags.Info): PluginInstance[] {
+function internalPlugins(_flags: RuntimeFlags.Info): PluginInstance[] {
   return [
     GptChatByAuthPlugin, // kilocode_change
-    AtomicChatPlugin, // kilocode_change
-    AnacondaDesktopPlugin, // kilocode_change
-    // Temporary rollout: pre-release builds use WebSockets by default; releases require explicit opt-in.
-    (input) =>
-      CodexAuthPlugin(input, {
-        experimentalWebSockets: experimentalWebSocketsEnabled({ enabled: flags.experimentalWebSockets }),
-      }),
-    CopilotAuthPlugin,
-    ModalPlugin,
-    // kilocode_change start
-    // kilocode_change - external auth plugins ship against @opencode-ai/plugin; bridge to our @kilocode/plugin types
-    GitlabAuthPlugin as unknown as PluginInstance,
-    PoeAuthPlugin as unknown as PluginInstance,
+    // kilocode_change start - restrict built-in plugins to Klepa auth only
+    // AtomicChatPlugin,
+    // AnacondaDesktopPlugin,
+    // (input) =>
+    //   CodexAuthPlugin(input, {
+    //     experimentalWebSockets: experimentalWebSocketsEnabled({ enabled: flags.experimentalWebSockets }),
+    //   }),
+    // CopilotAuthPlugin,
+    // ModalPlugin,
+    // GitlabAuthPlugin as unknown as PluginInstance,
+    // PoeAuthPlugin as unknown as PluginInstance,
+    // CloudflareWorkersAuthPlugin,
+    // CloudflareAIGatewayAuthPlugin,
+    // AzureAuthPlugin,
+    // DigitalOceanAuthPlugin,
+    // SnowflakeCortexAuthPlugin,
+    // XaiAuthPlugin,
+    // CerebrasPlugin,
     // kilocode_change end
-    CloudflareWorkersAuthPlugin,
-    CloudflareAIGatewayAuthPlugin,
-    AzureAuthPlugin,
-    DigitalOceanAuthPlugin,
-    SnowflakeCortexAuthPlugin,
-    XaiAuthPlugin,
-    CerebrasPlugin,
   ]
 }
 

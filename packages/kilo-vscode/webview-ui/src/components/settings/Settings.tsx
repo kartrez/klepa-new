@@ -10,7 +10,6 @@ import { useLanguage } from "../../context/language"
 import { useConfig } from "../../context/config"
 import { useSession } from "../../context/session"
 import ModelsTab from "./ModelsTab"
-import * as Sandboxing from "./sandboxing"
 import { useServer } from "../../context/server"
 import type { MigrationSource } from "../../types/messages"
 import { configMessage } from "../../utils/open-config"
@@ -37,14 +36,12 @@ const AgentBehaviourTab = lazy(() => import("./AgentBehaviourTab"))
 const AutoApproveTab = lazy(() => import("./AutoApproveTab"))
 const BrowserTab = lazy(() => import("./BrowserTab"))
 const CheckpointsTab = lazy(() => import("./CheckpointsTab"))
-const AutocompleteTab = lazy(() => import("./AutocompleteTab"))
 const NotificationsTab = lazy(() => import("./NotificationsTab"))
 const ContextTab = lazy(() => import("./ContextTab"))
 const CommitMessageTab = lazy(() => import("./CommitMessageTab"))
 const ExperimentalTab = lazy(() => import("./ExperimentalTab"))
 const LanguageTab = lazy(() => import("./LanguageTab"))
 const AboutKiloCodeTab = lazy(() => import("./AboutKiloCodeTab"))
-const SandboxingTab = lazy(() => import("./SandboxingTab"))
 
 export interface SettingsProps {
   tab?: string
@@ -191,7 +188,7 @@ const AgentManagerTab: Component<{ projectId?: string }> = (props) => {
             description={language.t("agentManager.settings.worktreePool.description")}
           >
             <Switch
-              checked={(settings()["agentManager.worktreePool"] as boolean | undefined) ?? true}
+              checked={(settings()["agentManager.worktreePool"] as boolean | undefined) ?? false}
               onChange={(value) => applySetting("agentManager.worktreePool", value)}
               hideLabel
             >
@@ -266,13 +263,10 @@ const Settings: Component<SettingsProps> = (props) => {
   const server = useServer()
   const language = useLanguage()
   const vscode = useVSCode()
-  const { loading, isDirty, saving, saveError, saveConfig, discardConfig, features } = useConfig()
+  const { loading, isDirty, saving, saveError, saveConfig, discardConfig } = useConfig()
   const session = useSession()
   const [active, setActive] = createSignal(props.tab ?? "models")
   const [errorExpanded, setErrorExpanded] = createSignal(false)
-  const sandboxing = createMemo(
-    () => Sandboxing.visible(features()) || (loading() && (active() === "sandboxing" || props.tab === "sandboxing")),
-  )
 
   const busyCount = () => Object.values(session.allStatusMap()).filter((s) => s.type === "busy").length
 
@@ -303,19 +297,18 @@ const Settings: Component<SettingsProps> = (props) => {
     on(
       () => props.tab,
       (tab) => {
-        if (!tab || tab === "providers" || tab === "indexing" || (!features().autocomplete && tab === "autocomplete")) {
+        if (!tab || tab === "providers" || tab === "indexing" || tab === "autocomplete") {
           setActive("models")
+          return
+        }
+        if (tab === "sandboxing") {
+          setActive("experimental")
           return
         }
         setActive(tab)
       },
     ),
   )
-
-  createEffect(() => {
-    if (loading() || sandboxing() || active() !== "sandboxing") return
-    onTabChange("experimental")
-  })
 
   const onTabChange = (tab: string) => {
     setActive(tab)
@@ -325,9 +318,9 @@ const Settings: Component<SettingsProps> = (props) => {
 
   const searchTabs = createMemo<SettingsTab[]>(() =>
     SETTINGS_TABS.filter((tab) => {
-      if (tab.id === "providers" || tab.id === "indexing") return false
-      if (tab.id === "autocomplete") return features().autocomplete
-      if (tab.id === "sandboxing") return sandboxing()
+      if (tab.id === "providers" || tab.id === "indexing" || tab.id === "autocomplete" || tab.id === "sandboxing") {
+        return false
+      }
       if (tab.id === "agentManager") return props.agentManagerSettings === true
       return true
     }),
@@ -428,12 +421,6 @@ const Settings: Component<SettingsProps> = (props) => {
             <Icon name="eye" />
             <span class="label">{language.t("settings.display.title")}</span>
           </Tabs.Trigger>
-          <Show when={features().autocomplete}>
-            <Tabs.Trigger value="autocomplete" aria-label={language.t("settings.autocomplete.title")}>
-              <Icon name="code-lines" />
-              <span class="label">{language.t("settings.autocomplete.title")}</span>
-            </Tabs.Trigger>
-          </Show>
           <Tabs.Trigger value="notifications" aria-label={language.t("settings.notifications.title")}>
             <Icon name="circle-check" />
             <span class="label">{language.t("settings.notifications.title")}</span>
@@ -451,12 +438,6 @@ const Settings: Component<SettingsProps> = (props) => {
             <Icon name="settings-gear" />
             <span class="label">{language.t("settings.experimental.title")}</span>
           </Tabs.Trigger>
-          <Show when={sandboxing()}>
-            <Tabs.Trigger value="sandboxing" aria-label={language.t("settings.sandboxing.title")}>
-              <Icon name="shield" />
-              <span class="label">{language.t("settings.sandboxing.title")}</span>
-            </Tabs.Trigger>
-          </Show>
           <Tabs.Trigger value="language" aria-label={language.t("settings.language.title")}>
             <Icon name="speech-bubble" />
             <span class="label">{language.t("settings.language.title")}</span>
@@ -501,12 +482,6 @@ const Settings: Component<SettingsProps> = (props) => {
           <h3>{language.t("settings.display.title")}</h3>
           <DisplayTab />
         </Tabs.Content>
-        <Show when={features().autocomplete}>
-          <Tabs.Content value="autocomplete">
-            <h3>{language.t("settings.autocomplete.title")}</h3>
-            <AutocompleteTab onNavigateToModels={() => onTabChange("models")} />
-          </Tabs.Content>
-        </Show>
         <Tabs.Content value="notifications">
           <h3>{language.t("settings.notifications.title")}</h3>
           <NotificationsTab />
@@ -524,12 +499,6 @@ const Settings: Component<SettingsProps> = (props) => {
           <h3>{language.t("settings.experimental.title")}</h3>
           <ExperimentalTab />
         </Tabs.Content>
-        <Show when={sandboxing()}>
-          <Tabs.Content value="sandboxing">
-            <h3>{language.t("settings.sandboxing.title")}</h3>
-            <SandboxingTab />
-          </Tabs.Content>
-        </Show>
         <Tabs.Content value="language">
           <h3>{language.t("settings.language.title")}</h3>
           <LanguageTab />

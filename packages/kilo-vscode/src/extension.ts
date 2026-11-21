@@ -1,6 +1,5 @@
 import * as vscode from "vscode"
 import { basename } from "node:path"
-import { realpathSync } from "node:fs"
 import { KiloProvider } from "./KiloProvider"
 import { isAuthCallbackPath } from "./kilo-provider/handlers/gpt-chat-by-auth"
 import { AgentManagerProvider } from "./agent-manager/AgentManagerProvider"
@@ -10,11 +9,7 @@ import { DocumentViewerProvider } from "./DocumentViewerProvider"
 import { DiffSourceCatalog } from "./diff/sources/catalog"
 import { DiffVirtualProvider } from "./DiffVirtualProvider"
 import { SettingsEditorProvider } from "./SettingsEditorProvider"
-import { MarketplacePanelProvider } from "./MarketplacePanelProvider"
-import { MarketplaceNotifier } from "./services/marketplace/notifier"
 import { SubAgentViewerProvider } from "./SubAgentViewerProvider"
-import { BrowserTabProvider } from "./browser-tab/BrowserTabProvider"
-import { formatBrowserFeedback } from "./shared/browser-feedback"
 import { EXTENSION_DISPLAY_NAME } from "./constants"
 import { KiloConnectionService } from "./services/cli-backend"
 import { retention } from "./services/task-cleanup/retention"
@@ -23,24 +18,13 @@ import { ensureBackendForAutocomplete } from "./services/autocomplete/ensure-bac
 import { AutocompleteServiceManager } from "./services/autocomplete/AutocompleteServiceManager"
 import { configFeatures } from "./features"
 import { AttentionService, showOSNotification } from "./services/attention"
-import { CaffeinationService } from "./services/caffeination"
-import { confirmCaffeination } from "./services/caffeination/confirm"
-import { createCaffeinationDriver } from "./services/caffeination/inhibitor"
-import { BrowserAutomationService, BrowserBroker } from "./services/browser-automation"
-import {
-  integratedBrowserFallback,
-  integratedBrowserUseSystemChrome,
-  migrateIntegratedBrowserUseSystemChrome,
-} from "./services/browser-automation/chrome-setting"
+import { BrowserAutomationService } from "./services/browser-automation"
 import { TelemetryEventName, TelemetryProxy } from "./services/telemetry"
 import { registerCommitMessageService } from "./services/commit-message"
 import { registerCodeActions, registerTerminalActions, KiloCodeActionProvider } from "./services/code-actions"
 import { closeTaskTarget, SurfaceFocus } from "./commands/close-task-target"
 import { registerToggleAutoApprove } from "./commands/toggle-auto-approve"
-import { registerHeapSnapshot } from "./commands/heap-snapshot"
-import { RemoteStatusService } from "./services/RemoteStatusService"
 import { markWorkspace } from "./util/spotlight"
-import { createNotebookBridge } from "./services/notebook"
 import { createGitExecutable } from "./util/git-executable"
 import { isCursorHost } from "./utils"
 import { sameDirectory } from "./kilo-provider-utils"
@@ -48,7 +32,6 @@ import { mcpAuth } from "./services/mcp-auth"
 import { showAuthUrl } from "./kilo-provider/mcp-oauth"
 
 let agentManager: AgentManagerProvider | undefined
-let caffeination: CaffeinationService | undefined
 let shuttingDown = false
 
 const RESTORE_KEY = "kilo.workbench.restore"
@@ -76,38 +59,22 @@ export async function activate(context: vscode.ExtensionContext) {
   void vscode.commands.executeCommand("setContext", "kilo-code.new.isCursor", isCursorHost())
   const telemetry = TelemetryProxy.getInstance()
 
-  await migrateIntegratedBrowserUseSystemChrome().catch((error: unknown) =>
-    console.warn("[Kilo New] Integrated Browser Chrome preference migration failed:", error),
-  )
-
-  const browserBroker = new BrowserBroker({
-    log: (...args) => console.warn("[Kilo New] BrowserBroker:", ...args),
-    enabled: () => vscode.workspace.getConfiguration("kilo-code.new.experimental").get("browserAutomation", false),
-    trusted: () => vscode.workspace.isTrusted,
-    useSystemChrome: () => integratedBrowserUseSystemChrome(),
-    fallback: () => process.platform === "linux" && integratedBrowserFallback(),
-    theme: browserTheme,
-  })
-  context.subscriptions.push(vscode.window.onDidChangeActiveColorTheme(() => browserBroker.retheme()))
-
   // Create shared connection service (one server for all webviews)
   const connectionService = new KiloConnectionService(
     context,
-    () => browserBroker.env(),
+    undefined,
     (dir): Promise<void> => browserAutomationService.ready(dir),
   )
 
-  // One MCP OAuth sign-in service for the whole extension (sidebar, Kilo tabs, Settings, Marketplace).
+  // One MCP OAuth sign-in service for the whole extension (sidebar, Kilo tabs, Settings).
   // Initialize it eagerly so its MCP OAuth URL subscriptions and `onUrl`
   // fallback are wired up exactly once, instead of racing whichever
   // KiloProvider happens to construct first.
   mcpAuth(connectionService, { onUrl: showAuthUrl })
 
-  // Manages the built-in Playwright MCP server for ordinary sessions. This is
-  // independent from the Agent Manager browser broker above.
+  // Manages the built-in Playwright MCP server for ordinary sessions.
   const browserAutomationService = new BrowserAutomationService(connectionService)
   void browserAutomationService.syncWithSettings()
-  const notebookBridge = createNotebookBridge(connectionService)
   let restore = context.workspaceState.get<RestoreState>(RESTORE_KEY) ?? {}
   const remember = (patch: RestoreState) => {
     const next = { ...restore, ...patch }
@@ -115,11 +82,6 @@ export async function activate(context: vscode.ExtensionContext) {
     restore = next
     void context.workspaceState.update(RESTORE_KEY, restore)
   }
-
-  // Create remote status service (one status bar item for all webviews)
-  const remoteService = new RemoteStatusService()
-  context.subscriptions.push(remoteService)
-  connectionService.setRemoteService(remoteService)
 
   // Daily trigger for the backend-owned session retention pass (Settings → Checkpoints)
   const cleanup = retention(connectionService, context)
@@ -133,17 +95,7 @@ export async function activate(context: vscode.ExtensionContext) {
         .catch((error) => console.warn("[Kilo New] Playwright MCP re-registration failed:", error))
       const config = connectionService.getServerConfig()
       if (config) telemetry.configure(config.baseUrl, config.password)
-      try {
-        remoteService.setClient(connectionService.getClient())
-        console.log("[Kilo New] CLI connected, calling remoteService.refresh()")
-        remoteService.refresh().catch((err) => console.warn("[Kilo New] initial remote refresh failed:", err))
-      } catch {
-        remoteService.setClient(null)
-      }
       if (features.autocomplete) AutocompleteServiceManager.getInstance()?.load()
-    } else {
-      remoteService.clearState()
-      remoteService.setClient(null)
     }
   })
 
@@ -182,94 +134,6 @@ export async function activate(context: vscode.ExtensionContext) {
     },
     onHidden: () => focus.lost("sidebar"),
   })
-  provider.setRemoteService(remoteService)
-
-  // Editor-tab Integrated Browser for sidebar and Kilo editor-tab sessions. It
-  // registers its route owner before the Agent Manager so sidebar sessions are
-  // claimed here (no project id) while Agent Manager worktree requests, which
-  // carry a project id, still resolve to Agent Manager.
-  //
-  // macOS resolves /tmp to /private/tmp, and the CLI reports canonical
-  // directories. Canonicalize both sides so a workspace opened through a
-  // symlinked path still matches the session directory the backend records.
-  const canonical = new Map<string, string>()
-  const real = (value: string): string => {
-    const cached = canonical.get(value)
-    if (cached !== undefined) return cached
-    const resolved = (() => {
-      try {
-        return realpathSync.native(value)
-      } catch {
-        return value
-      }
-    })()
-    canonical.set(value, resolved)
-    return resolved
-  }
-  const sessionDirectory = (sessionId: string): string | undefined => {
-    const directory =
-      provider.getSessionDirectories().get(sessionId) ??
-      [...tabPanels.values()]
-        .map((item) => item.getSessionDirectories().get(sessionId))
-        .find((value) => value !== undefined) ??
-      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
-    return directory ? real(directory) : undefined
-  }
-  const browserTabProvider = new BrowserTabProvider(
-    context.extensionUri,
-    { browser: browserBroker, connectionPort: () => connectionService.getServerInfo()?.port },
-    {
-      enabled: () => vscode.workspace.getConfiguration("kilo-code.new.experimental").get("browserAutomation", false),
-      trusted: () => vscode.workspace.isTrusted,
-      resolve: (route) => {
-        if (!vscode.workspace.isTrusted) return
-        if (!vscode.workspace.getConfiguration("kilo-code.new.experimental").get("browserAutomation", false)) return
-        // The Agent Manager owns project-scoped browser entries and keeps them
-        // alive across session switches. Defer while it holds one for this
-        // session so a shared root session does not get two browser entries.
-        if (browserTabProvider.owner && browserBroker.ownedByOther(route.sessionId, browserTabProvider.owner)) return
-        const tabs = [...tabPanels.values()]
-        const surfaced =
-          provider.getCurrentSessionId() === route.sessionId ||
-          tabs.some((item) => item.getCurrentSessionId() === route.sessionId) ||
-          // Keep an open browser tab's session owned while the user views another
-          // session, so switching sessions does not invalidate its live browser.
-          browserTabProvider.has(route.sessionId)
-        if (!surfaced) return
-        const directory = sessionDirectory(route.sessionId)
-        if (!directory || !sameDirectory(directory, real(route.directory))) return
-        return { sessionId: route.sessionId, directory: real(route.directory) }
-      },
-      directory: sessionDirectory,
-      approve: async (_route, origin) => {
-        if (!vscode.workspace.isTrusted) return false
-        const answer = await vscode.window.showWarningMessage(
-          `Allow the Integrated Browser to navigate to ${origin}?`,
-          { modal: true },
-          "Allow",
-        )
-        return answer === "Allow"
-      },
-      reference: (sessionId, value) => {
-        const target =
-          [...tabPanels.values()].find((item) => item.getCurrentSessionId() === sessionId) ??
-          (provider.getCurrentSessionId() === sessionId ? provider : undefined)
-        if (!target) return
-        target.postMessage({ type: "appendChatBoxMessage", text: formatBrowserFeedback([value]), browser: value })
-      },
-      log: (...args) => console.warn("[Kilo New] BrowserTabProvider:", ...args),
-    },
-  )
-  context.subscriptions.push({ dispose: () => browserTabProvider.dispose() })
-
-  const openBrowserTab = () => {
-    const sessionId = activeTabProvider()?.getCurrentSessionId() ?? provider.getCurrentSessionId()
-    if (!sessionId) {
-      void vscode.window.showWarningMessage("Start a session before opening the Integrated Browser.")
-      return
-    }
-    browserTabProvider.open(sessionId)
-  }
 
   const deliver = (comments: unknown[], autoSend: boolean, sessionID?: string, directory?: string): void => {
     const target = sessionID
@@ -307,53 +171,6 @@ export async function activate(context: vscode.ExtensionContext) {
   if (process.platform === "darwin") skip.push("kilo-code.new.agentManager.runScript")
   ensureCommandsSkipShell(skip)
 
-  // Create Agent Manager provider for editor panel
-  const reason = vscode.env.remoteName ? "Keep Awake is only available in a local VS Code window." : undefined
-  const awake = new CaffeinationService(connectionService, createCaffeinationDriver({ reason }))
-  caffeination = awake
-  let previous = awake.getState()
-  const unsubscribeCaffeination = awake.onChange((state) => {
-    const prior = previous
-    previous = state
-    if (state.error && state.error !== prior.error) {
-      void vscode.window.showErrorMessage(`Keep Awake stopped: ${state.error}`)
-      return
-    }
-    if (state.enabled === prior.enabled) return
-    void vscode.window.showInformationMessage(
-      state.enabled ? "Keep Awake enabled. Kilo will prevent system sleep while agents work." : "Keep Awake disabled.",
-    )
-  })
-  context.subscriptions.push({ dispose: unsubscribeCaffeination })
-  const toggle = confirmCaffeination(awake, async () => {
-    if (!vscode.workspace.isTrusted) {
-      await vscode.window.showWarningMessage("Trust this workspace before enabling Keep Awake.")
-      return false
-    }
-    if (context.globalState.get<boolean>("caffeination.confirmed") === true) return true
-    const detail = [
-      "Keep Awake prevents system sleep while Kilo sessions are in progress, including some waits for approval. It does not keep the display on or disable screen locking. It turns off when this VS Code window reloads.",
-      "Agents may continue to access files, network services, and available credentials while the computer is locked. Enable only if your organization's device policy permits it.",
-      ...(process.platform === "linux"
-        ? ["On Linux, this can also block manual suspend. Turn Keep Awake off before suspending."]
-        : []),
-    ].join("\n\n")
-    const answer = await vscode.window.showWarningMessage(
-      "Keep this computer awake while Kilo agents work?",
-      { modal: true, detail },
-      "Enable Keep Awake",
-    )
-    if (answer !== "Enable Keep Awake") return false
-    await context.globalState.update("caffeination.confirmed", true).then(undefined, (error: unknown) => {
-      console.warn("[Kilo New] Could not save Keep Awake confirmation:", error)
-    })
-    return true
-  })
-  const controls = {
-    getState: () => awake.getState(),
-    onChange: awake.onChange.bind(awake),
-    setEnabled: toggle,
-  }
   const git = createGitExecutable({
     preferred: async () => {
       const extension = vscode.extensions.getExtension("vscode.git")
@@ -364,8 +181,8 @@ export async function activate(context: vscode.ExtensionContext) {
     log: (message) => console.warn(`[Kilo New] ${message}`),
   })
   const binary = process.platform === "win32" ? await git() : git
-  const agentManagerHost = new VscodeHost(context.extensionUri, connectionService, context, remoteService, controls)
-  const agentManagerProvider = new AgentManagerProvider(agentManagerHost, connectionService, binary, browserBroker)
+  const agentManagerHost = new VscodeHost(context.extensionUri, connectionService, context)
+  const agentManagerProvider = new AgentManagerProvider(agentManagerHost, connectionService, binary)
   agentManagerHost.setFocusListener({
     gained: () => {
       focus.gained("agentManager")
@@ -380,13 +197,6 @@ export async function activate(context: vscode.ExtensionContext) {
   })
   agentManagerProvider.onPanelVisibilityChange((visible) => remember({ agentManager: visible }))
   agentManager = agentManagerProvider
-  context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration("kilo-code.new.experimental.browserAutomation")) {
-        agentManagerProvider.refreshBrowserAutomation()
-      }
-    }),
-  )
   context.subscriptions.push(agentManagerProvider)
 
   // Wire "Continue in Worktree" from sidebar → Agent Manager
@@ -396,9 +206,6 @@ export async function activate(context: vscode.ExtensionContext) {
   provider.setCreateWorktreeHandler((baseBranch, branchName) =>
     agentManagerProvider.createFromSidebar(baseBranch, branchName),
   )
-  // Chat web links open in the Integrated Browser tab for the current session.
-  const openLink = (url: string, sessionId?: string) => (sessionId ? browserTabProvider.openUrl(sessionId, url) : false)
-  provider.setOpenLinkHandler(openLink)
 
   // Register toggle auto-approve shortcut (Ctrl+Alt+A / Cmd+Alt+A)
   const defaultDir = () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd()
@@ -484,7 +291,6 @@ export async function activate(context: vscode.ExtensionContext) {
         if (chat === tabProvider) chat = undefined
       },
     })
-    tabProvider.setRemoteService(remoteService)
     tabProvider.setAutoApproveController(autoApprove)
     tabProvider.setContinueInWorktreeHandler((sessionId, progress) =>
       agentManagerProvider.continueFromSidebar(sessionId, progress),
@@ -492,7 +298,6 @@ export async function activate(context: vscode.ExtensionContext) {
     tabProvider.setCreateWorktreeHandler((baseBranch, branchName) =>
       agentManagerProvider.createFromSidebar(baseBranch, branchName),
     )
-    tabProvider.setOpenLinkHandler(openLink)
     tabProvider.setDiffVirtualProvider(diffVirtualProvider)
     tabProvider.setDiffViewerProvider(diffViewerProvider)
     tabProvider.setReviewCommentsHandler(deliver)
@@ -547,41 +352,17 @@ export async function activate(context: vscode.ExtensionContext) {
   const settingsEditorProvider = new SettingsEditorProvider(context.extensionUri, connectionService, context, {
     ...agentManagerProvider.settings,
   })
-  settingsEditorProvider.setRemoteService(remoteService)
-  const marketplacePanelProvider = new MarketplacePanelProvider(context.extensionUri, connectionService, context)
-  context.subscriptions.push(settingsEditorProvider, marketplacePanelProvider)
-
-  // Surface a discardable notification when a marketplace item matches the workspace.
-  const marketplaceNotifier = new MarketplaceNotifier(
-    connectionService,
-    context,
-    (item) => marketplacePanelProvider.openInstall(item),
-    (item) => marketplacePanelProvider.focusItem(item),
-  )
-  context.subscriptions.push(marketplaceNotifier)
-  marketplaceNotifier.start()
+  context.subscriptions.push(settingsEditorProvider)
 
   // Create sub-agent viewer provider (read-only editor panel for sub-agent sessions)
   const subAgentViewerProvider = new SubAgentViewerProvider(context.extensionUri, connectionService, context)
   context.subscriptions.push(subAgentViewerProvider)
 
   // Register serializers so standalone panels restore on restart
-  const settingsViews = ["settingsPanel", "profilePanel"] as const
-  for (const suffix of settingsViews) {
-    context.subscriptions.push(
-      vscode.window.registerWebviewPanelSerializer(`kilo-code.new.${suffix}`, {
-        deserializeWebviewPanel(panel: vscode.WebviewPanel) {
-          settingsEditorProvider.deserializePanel(panel)
-          return Promise.resolve()
-        },
-      }),
-    )
-  }
-
   context.subscriptions.push(
-    vscode.window.registerWebviewPanelSerializer(MarketplacePanelProvider.viewType, {
+    vscode.window.registerWebviewPanelSerializer("kilo-code.new.settingsPanel", {
       deserializeWebviewPanel(panel: vscode.WebviewPanel) {
-        marketplacePanelProvider.deserializePanel(panel)
+        settingsEditorProvider.deserializePanel(panel)
         return Promise.resolve()
       },
     }),
@@ -648,9 +429,6 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("kilo-code.new.sidebarTitle.agentManagerOpen", () => {
       track("agent_manager", "kilo-code.new.agentManagerOpen")
     }),
-    vscode.commands.registerCommand("kilo-code.new.sidebarTitle.marketplaceButtonClicked", () => {
-      track("marketplace", "kilo-code.new.marketplaceButtonClicked")
-    }),
     vscode.commands.registerCommand("kilo-code.new.sidebarTitle.settingsButtonClicked", () => {
       track("settings", "kilo-code.new.settingsButtonClicked")
     }),
@@ -667,9 +445,6 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand("kilo-code.new.agentManagerOpen", () => {
       agentManagerProvider.openPanel()
-    }),
-    vscode.commands.registerCommand("kilo-code.new.marketplaceButtonClicked", (directory?: string | null) => {
-      marketplacePanelProvider.openPanel(directory)
     }),
     vscode.commands.registerCommand("kilo-code.new.historyButtonClicked", () => {
       const tab = activeTabProvider()
@@ -694,39 +469,8 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("kilo-code.new.settingsSearch", () => {
       settingsEditorProvider.focusSearch()
     }),
-    vscode.commands.registerCommand("kilo-code.new.openIndexingSettings", () => {
-      settingsEditorProvider.openPanel("settings", "indexing")
-    }),
     vscode.commands.registerCommand("kilo-code.new.openMcpSettings", (focus?: string) => {
       settingsEditorProvider.openPanel("settings", "agentBehaviour", undefined, "mcpServers", focus)
-    }),
-    vscode.commands.registerCommand("kilo-code.new.showMemory", async () => {
-      if (agentManagerProvider.isActive()) {
-        await agentManagerProvider.showMemory()
-        return
-      }
-      const target = activeTabProvider() ?? provider
-      if (target === provider) await vscode.commands.executeCommand("kilo-code.SidebarProvider.focus")
-      await target.waitForReady()
-      await target.showMemory()
-    }),
-    vscode.commands.registerCommand("kilo-code.new.toggleMemory", async () => {
-      if (agentManagerProvider.isActive()) {
-        await agentManagerProvider.toggleMemory()
-        return
-      }
-      const target = activeTabProvider() ?? provider
-      if (target === provider) await vscode.commands.executeCommand("kilo-code.SidebarProvider.focus")
-      await target.waitForReady()
-      await target.toggleMemory()
-    }),
-    vscode.commands.registerCommand("kilo-code.new.toggleCaffeination", (enabled?: boolean) => {
-      const state = awake.getState()
-      const next = typeof enabled === "boolean" ? enabled : !(state.enabled || state.active)
-      if (next && !state.available) {
-        return vscode.window.showWarningMessage(state.error ?? "Keep Awake is unavailable on this platform.")
-      }
-      return toggle(next)
     }),
     vscode.commands.registerCommand("kilo-code.new.generateTerminalCommand", async () => {
       const input = await vscode.window.showInputBox({
@@ -742,14 +486,8 @@ export async function activate(context: vscode.ExtensionContext) {
         injectedTitle: "Generate terminal command",
       })
     }),
-    vscode.commands.registerCommand("kilo-code.new.toggleRemote", () => {
-      remoteService.toggle().catch((err) => console.error("[Kilo New] toggleRemote command failed:", err))
-    }),
     vscode.commands.registerCommand("kilo-code.new.openInTab", () => {
       return openKiloInNewTab(context, tabPanels, attach)
-    }),
-    vscode.commands.registerCommand("kilo-code.new.openBrowser", () => {
-      openBrowserTab()
     }),
     vscode.commands.registerCommand(
       "kilo-code.new.showChanges",
@@ -859,30 +597,10 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.window.registerUriHandler({
       async handleUri(uri: vscode.Uri) {
-        const sessionMatch = uri.path.match(/^\/kilocode\/s\/([a-zA-Z0-9_-]+)$/)
-        const sessionId = sessionMatch?.[1]
-        if (sessionId) {
-          console.log("[Kilo New] URI handler: opening cloud session:", sessionId)
-          await vscode.commands.executeCommand(`${KiloProvider.viewType}.focus`)
-          provider.openCloudSession(sessionId)
-          return
-        }
-
-        if (isAuthCallbackPath(uri.path)) {
-          console.log("[Kilo New] URI handler: gpt-chat.by loginhook")
-          await vscode.commands.executeCommand(`${KiloProvider.viewType}.focus`)
-          await provider.handleGptChatByAuthCallback(uri)
-          return
-        }
-
-        if (uri.path !== "/kilocode/switch" && uri.path !== "/kilocode/model") return
-        const params = new URLSearchParams(uri.query)
-        const modelID = params.get("model") || undefined
-        const agent = params.get("agent") || undefined
-        if (!modelID && !agent) return
-        console.log("[Kilo New] URI handler: applying linked Kilo selection:", { modelID, agent })
+        if (!isAuthCallbackPath(uri.path)) return
+        console.log("[Kilo New] URI handler: gpt-chat.by loginhook")
         await vscode.commands.executeCommand(`${KiloProvider.viewType}.focus`)
-        provider.selectKiloModel(modelID, agent)
+        await provider.handleGptChatByAuthCallback(uri)
       },
     }),
   )
@@ -892,8 +610,6 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Register commit message generation
   registerCommitMessageService(context, connectionService)
-
-  registerHeapSnapshot(context, connectionService)
 
   context.subscriptions.push(
     vscode.commands.registerCommand("kilo-code.new.reload", () => {
@@ -918,15 +634,10 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push({
     dispose: () => {
       shuttingDown = true
-      void caffeination?.dispose().catch((error: unknown) => {
-        console.warn("[Kilo New] Keep-awake cleanup failed:", error)
-      })
       unsubscribeStateChange()
       attention.dispose()
-      browserBroker.dispose()
       browserAutomationService.dispose()
       provider.dispose()
-      notebookBridge.dispose()
       connectionService.dispose()
     },
   })
@@ -934,17 +645,11 @@ export async function activate(context: vscode.ExtensionContext) {
 
 export async function deactivate() {
   shuttingDown = true
-  const results = await Promise.allSettled([caffeination?.dispose(), agentManager?.shutdown()])
+  const results = await Promise.allSettled([agentManager?.shutdown()])
   for (const result of results) {
     if (result.status === "rejected") console.warn("[Kilo New] Extension shutdown failed:", result.reason)
   }
   TelemetryProxy.getInstance().shutdown()
-}
-
-/** Current IDE color scheme, so the Integrated Browser matches the editor theme. */
-function browserTheme(): "dark" | "light" {
-  const kind = vscode.window.activeColorTheme.kind
-  return kind === vscode.ColorThemeKind.Light || kind === vscode.ColorThemeKind.HighContrastLight ? "light" : "dark"
 }
 
 function openKiloInNewTab(

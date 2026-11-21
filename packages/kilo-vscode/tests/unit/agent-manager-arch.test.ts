@@ -577,15 +577,15 @@ describe("Agent Manager Worktree Actions", () => {
     expect(bindings).toContain('quickWorktree: isMac ? "⌘⇧N" : "Ctrl+Shift+N"')
   })
 
-  it("reserves Cmd+Shift+M for the Agent Manager instead of Problems", () => {
+  it("keeps Cmd+Shift+M reserved for VS Code Problems without hijacking it", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf-8")) as {
       contributes: { keybindings: { command: string; key?: string; mac?: string }[] }
     }
     const removed = manifest.contributes.keybindings.find((item) => item.command === "-workbench.actions.view.problems")
     const manager = manifest.contributes.keybindings.find((item) => item.command === "kilo-code.new.agentManagerOpen")
 
-    expect(removed).toMatchObject({ key: "ctrl+shift+m", mac: "cmd+shift+m" })
-    expect(manager).toMatchObject({ key: "ctrl+shift+m", mac: "cmd+shift+m" })
+    expect(removed).toBeUndefined()
+    expect(manager).toBeUndefined()
   })
 
   it("routes prompt and side-terminal shortcut actions separately", () => {

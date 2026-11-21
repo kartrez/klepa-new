@@ -863,7 +863,7 @@ export const dict = {
 
   "settings.aboutKiloCode.telemetry.title": "Телеметрия",
   "settings.aboutKiloCode.telemetry.description":
-    "Используйте этот переключатель, чтобы изменить настройку телеметрии в Kilo. Если телеметрия отключена в VS Code или в среде выполнения, она останется отключённой.",
+    "Отправлять обезличенную статистику использования и отчёты об ошибках в Klepa AI (gpt-chat.by) для улучшения расширения. Исходный код, промпты и пути к файлам не собираются. Если телеметрия отключена в VS Code или в среде выполнения, отправка не выполняется.",
   "settings.aboutKiloCode.telemetry.toggle": "Включить телеметрию",
   "settings.aboutKiloCode.telemetry.saveFailed": "Не удалось обновить настройку телеметрии",
 
@@ -874,7 +874,7 @@ export const dict = {
   "settings.agentBehaviour.subtab.skills": "Навыки",
 
   "settings.browser.description":
-    "Настройте встроенную автоматизацию браузера на основе Playwright. Kilo может переходить по веб-страницам, взаимодействовать с ними и делать скриншоты в ваших сессиях.",
+    "Настройте встроенную автоматизацию браузера на основе Playwright. Klepa AI может переходить по веб-страницам, взаимодействовать с ними и делать скриншоты в ваших сессиях.",
   "settings.browser.enable.title": "Включить автоматизацию браузера",
   "settings.browser.enable.description":
     "Включить привязанный к сеансу браузер Agent Manager для локальных приложений и общедоступных HTTPS-страниц.",
@@ -903,10 +903,10 @@ export const dict = {
     "Воспроизводить звуки при завершении сеансов, возникновении ошибки или необходимости вашего участия",
   "settings.notifications.workbench.title": "Включить уведомления VS Code",
   "settings.notifications.workbench.description":
-    "Показывать уведомления VS Code, когда Kilo завершает задачу или требуется ваше участие",
+    "Показывать уведомления VS Code, когда Klepa AI завершает задачу или требуется ваше участие",
   "settings.notifications.os.title": "Включить уведомления операционной системы",
   "settings.notifications.os.description":
-    "Показывать нативные уведомления операционной системы, когда Kilo завершает задачу или требуется ваше участие, а VS Code неактивен.",
+    "Показывать нативные уведомления операционной системы, когда Klepa AI завершает задачу или требуется ваше участие, а VS Code неактивен.",
   "settings.notifications.testSound": "Тест",
   "settings.notifications.testOS": "Тест",
   "settings.notifications.testOS.testing": "Отправка тестового уведомления…",
@@ -1194,7 +1194,7 @@ export const dict = {
   "settings.checkpoints.enable.description": "Создавать контрольные точки перед редактированием файлов",
   "settings.autoCleanup.enable.title": "Включить автоматическую очистку сессий",
   "settings.autoCleanup.enable.description":
-    "Автоматически удаляет старую историю сессий по истечении заданного числа дней, во всех проектах и во всех клиентах Kilo на этом компьютере, а не только в этом окне. Запущенные сессии и сессии с недавним форком никогда не удаляются. Удаление необратимо.",
+    "Автоматически удаляет старую историю сессий по истечении заданного числа дней, во всех проектах и во всех клиентах Klepa AI на этом компьютере, а не только в этом окне. Запущенные сессии и сессии с недавним форком никогда не удаляются. Удаление необратимо.",
   "settings.autoCleanup.defaultRetention.title": "Хранить сессии (дней)",
   "settings.autoCleanup.defaultRetention.description":
     "Как долго хранится история сессий до удаления автоматической очисткой.",
@@ -1212,7 +1212,7 @@ export const dict = {
     "Удаление сессий: обработано {{processed}}/{{total}} (удалено {{deleted}}, с ошибкой {{failed}})",
   "settings.autoCleanup.runNow": "Запустить очистку сейчас",
   "settings.autoCleanup.runNow.confirm":
-    "Безвозвратно удалить устаревшие сессии во всех проектах и во всех клиентах Kilo на этом компьютере?",
+    "Безвозвратно удалить устаревшие сессии во всех проектах и во всех клиентах Klepa AI на этом компьютере?",
   "settings.autoCleanup.stop": "Остановить очистку",
   "settings.autoCleanup.progress.cancelling": "Остановка очистки сессий...",
   "settings.autoCleanup.lastRun.cancelled": "прервана",
@@ -1441,7 +1441,7 @@ export const dict = {
   "diffViewer.comment.openPR": "Открыть PR",
   "diffViewer.comment.localChanges": "Локальные изменения",
   "diffViewer.comment.prChanges": "Изменения PR",
-  "diffViewer.comment.sendToKilo": "Отправить в Kilo",
+  "diffViewer.comment.sendToKilo": "Отправить в Klepa AI",
   "diffViewer.comment.sendToGithub": "Отправить в GitHub #{{number}}",
   "diffViewer.comment.chooseDestination": "Выбрать назначение",
   "diffViewer.notice.snapshotsDisabled":

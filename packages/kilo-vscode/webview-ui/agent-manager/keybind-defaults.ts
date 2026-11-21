@@ -24,7 +24,7 @@ export const defaultBindings: Record<string, string> = {
   closeWorktree: isMac ? "⌘⇧W" : "Ctrl+Shift+W",
   openWorktree: isMac ? "⌘⇧O" : "Ctrl+Shift+O",
   openPR: isMac ? "⌘⇧R" : "Ctrl+Shift+R",
-  agentManagerOpen: isMac ? "⌘⇧M" : "Ctrl+Shift+M",
+  agentManagerOpen: "",
   cycleAgentMode: isMac ? "⌘." : "Ctrl+.",
   cyclePreviousAgentMode: isMac ? "⌘⇧." : "Ctrl+Shift+.",
   ...Object.fromEntries(

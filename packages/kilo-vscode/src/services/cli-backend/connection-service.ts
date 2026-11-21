@@ -800,26 +800,7 @@ export class KiloConnectionService {
   }
 
   private sendViewed(): void {
-    if (this.viewedSending) {
-      this.viewedDirty = true
-      return
-    }
-    if (!this.client) return
-
-    const visible = new Set<string>()
-    for (const ids of this.visible.values()) for (const id of ids) visible.add(id)
-    const attached = new Set<string>(visible)
-    for (const ids of this.attached.values()) for (const id of ids) attached.add(id)
-
-    this.viewedSending = true
-    this.viewedDirty = false
-    void this.client.session
-      .viewed({ viewer: { id: this.viewerId, active: this.active }, attached: [...attached], visible: [...visible] })
-      .catch((err) => console.warn("[Kilo New] ConnectionService: viewed flush failed:", err))
-      .finally(() => {
-        this.viewedSending = false
-        if (this.viewedDirty) this.sendViewed()
-      })
+    // Presence tracking (Kilo Viewers) disabled in Klepa.
   }
 
   /**
@@ -1082,8 +1063,6 @@ export class KiloConnectionService {
 
   private startCheckin(): void {
     this.stopCheckin()
-    this.checkinTimer = setInterval(() => this.flushViewed(), 60_000)
-    this.checkinTimer.unref?.()
   }
 
   private stopCheckin(): void {

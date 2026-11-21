@@ -203,4 +203,12 @@ export interface FeatureFlags {
   autocomplete: boolean
   backgroundSubagents: boolean
   speechToText: boolean
+  marketplace: boolean
+  remoteControl: boolean
+  integratedBrowser: boolean
+  projectMemory: boolean
+  swarm: boolean
+  codeMode: boolean
+  caffeination: boolean
+  nativeNotebookTools: boolean
 }

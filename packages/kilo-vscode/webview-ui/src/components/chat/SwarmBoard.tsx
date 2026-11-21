@@ -84,12 +84,13 @@ export function useSwarmBoard(props: { readonly?: boolean; projectId?: string })
   const allowed = createMemo(() => {
     const current = session.currentSession()
     return (
+      config.features().swarm &&
       !!current &&
       !props.readonly &&
       !current.parentID &&
       current.id === session.currentSessionID() &&
       !current.id.startsWith("cloud:") &&
-      (config.config().shared_agent_board ?? true)
+      (config.config().shared_agent_board ?? false)
     )
   })
 

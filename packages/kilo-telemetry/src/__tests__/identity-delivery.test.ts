@@ -1,33 +1,45 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { createHash } from "node:crypto"
-import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises"
+import { mkdtemp, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
 let dir: string
 beforeEach(async () => {
-  dir = await mkdtemp(path.join(tmpdir(), "kilo-delivery-"))
+  dir = await mkdtemp(path.join(tmpdir(), "klepa-delivery-"))
   await Bun.write(path.join(dir, "telemetry-id"), "test-machine")
-  await Bun.write(
-    path.join(dir, "telemetry-profile.json"),
-    JSON.stringify({
-      token: createHash("sha256").update("test-token").digest("hex"),
-      email: "test@example.com",
-      fetchedAt: Date.now(),
-    }),
-  )
 })
 afterEach(() => rm(dir, { recursive: true, force: true }))
+
+interface CapturedRequest {
+  url: string
+  headers: Record<string, string>
+  body: {
+    client: "vscode" | "cli"
+    installationId?: string
+    appVersion?: string
+    events: Array<{
+      event: string
+      reference: string
+      occurredAt: string
+      rating?: string
+      props?: Record<string, unknown>
+    }>
+  }
+}
 
 async function run(env: Record<string, string> = {}) {
   const child = Bun.spawn([process.execPath, path.join(import.meta.dir, "fixtures/identity-process.ts")], {
     env: {
       ...process.env,
+      KLEPA_TELEMETRY_URL: "https://telemetry.example.test/api/klepa/telemetry",
       KILO_TELEMETRY_LEVEL: "all",
       KILO_TELEMETRY_HOST_DISABLED: "0",
-      KILO_APP_NAME: "kilo-cli",
+      KILO_APP_NAME: "klepa-cli",
       KILO_APP_VERSION: "",
+      KILO_PLATFORM: "cli",
       KILO_MACHINE_ID: "",
+      DO_NOT_TRACK: "",
+      KLEPA_ANALYTICS: "",
       TEST_DATA: dir,
       ...env,
     },
@@ -37,39 +49,51 @@ async function run(env: Record<string, string> = {}) {
   const output = await new Response(child.stdout).text()
   const error = await new Response(child.stderr).text()
   expect(await child.exited, error).toBe(0)
-  const result: {
-    event: string
-    distinct_id: string
-    properties: { alias?: string; $set?: Record<string, unknown> }
-  }[] = JSON.parse(output)
-  expect(result.filter((event) => event.event === "$identify")).toEqual([])
+  const result = JSON.parse(output) as CapturedRequest[]
+  for (const req of result) {
+    for (const ev of req.body.events) {
+      expect(ev.event).not.toBe("$identify")
+      expect(ev.event).not.toBe("$create_alias")
+      expect(ev.props).not.toHaveProperty("$set")
+    }
+  }
   return result
 }
 
-test("startup sends one alias and preserves identity across restarts", async () => {
-  const first = await run()
-  expect(first.filter((event) => event.event === "$create_alias")).toHaveLength(1)
-  expect(first.find((event) => event.event === "$create_alias")?.properties.alias).toBe("test-machine")
-  const next = await run({ TEST_VERSION: "2.0.0", TEST_ORG: "org-new" })
-  expect(next).toHaveLength(1)
-  expect(next.at(0)).toMatchObject({
-    event: "CLI Start",
-    distinct_id: "test@example.com",
-    properties: { $set: { appName: "kilo-cli", appVersion: "2.0.0", kilocodeOrganizationId: "org-new" } },
+test("sends Option 1 batch payload with Bearer token, X-Traffic-Source, and installationId without PostHog files", async () => {
+  const reqs = await run({ TEST_VERSION: "2.0.0", TEST_ORG: "org-new" })
+  expect(reqs).toHaveLength(1)
+  expect(reqs[0]).toMatchObject({
+    url: "https://telemetry.example.test/api/klepa/telemetry",
+    headers: {
+      authorization: "Bearer test-token",
+      "x-traffic-source": "Klepa-CLI v-2.0.0",
+    },
+    body: {
+      client: "cli",
+      installationId: "test-machine",
+      appVersion: "2.0.0",
+    },
   })
+  expect(reqs[0]!.body.events.map((e) => e.event)).toEqual(["app_open"])
+  const files = await readdir(dir)
+  expect(files.filter((f) => f.startsWith("telemetry-alias-") || f === "telemetry-profile.json")).toEqual([])
 })
 
-test("failed uploads do not suppress identity events on the next process", async () => {
-  await run({ TEST_FAIL: "1" })
-  const next = await run()
-  expect(next.filter((event) => event.event === "$create_alias")).toHaveLength(1)
-}, 20000)
+test("failed uploads exit cleanly without leaving alias or profile artifacts", async () => {
+  const failed = await run({ TEST_FAIL: "1" })
+  expect(failed).toHaveLength(1)
+  const files = await readdir(dir)
+  expect(files.filter((f) => f.startsWith("telemetry-alias-") || f === "telemetry-profile.json")).toEqual([])
+})
 
-test("disabled telemetry writes no alias marker and a later enabled run sends the alias", async () => {
+test("disabled telemetry sends no requests", async () => {
   expect(await run({ KILO_TELEMETRY_LEVEL: "off" })).toEqual([])
-  expect((await readdir(dir)).filter((file) => file.startsWith("telemetry-alias-"))).toEqual([])
-  const events = await run()
-  expect(events.filter((event) => event.event === "$create_alias")).toHaveLength(1)
+  expect(await run({ DO_NOT_TRACK: "1" })).toEqual([])
+  expect(await run({ DO_NOT_TRACK: "true" })).toEqual([])
+  expect(await run({ KLEPA_ANALYTICS: "0" })).toEqual([])
+  expect(await run({ KLEPA_ANALYTICS: "false" })).toEqual([])
+  expect(await run()).not.toEqual([])
 })
 
 test.each(["OFF", "0", "false", "unexpected"])("disables telemetry with KILO_TELEMETRY_LEVEL=%j", async (level) => {
@@ -82,10 +106,9 @@ test("allows telemetry with KILO_TELEMETRY_LEVEL=ON", async () => {
 
 test("a config opt-out wins over a client that sets KILO_TELEMETRY_LEVEL=all", async () => {
   expect(await run({ KILO_TELEMETRY_LEVEL: "all", TEST_CONFIG_ENABLED: "0" })).toEqual([])
-  expect((await readdir(dir)).filter((file) => file.startsWith("telemetry-alias-"))).toEqual([])
 })
 
-test("a blank telemetry environment defers to the Kilo preference", async () => {
+test("a blank telemetry environment defers to the configured preference", async () => {
   expect(await run({ KILO_TELEMETRY_LEVEL: "  ", TEST_CONFIG_ENABLED: "0" })).toEqual([])
   expect(await run({ KILO_TELEMETRY_LEVEL: "" })).not.toEqual([])
 })
@@ -93,42 +116,18 @@ test("a blank telemetry environment defers to the Kilo preference", async () => 
 test("runtime updates cannot turn on telemetry against an environment or host opt-out", async () => {
   expect(await run({ KILO_TELEMETRY_LEVEL: "off", TEST_HOST_ENABLED: "1", TEST_RUNTIME_ENABLED: "1" })).toEqual([])
   expect(await run({ KILO_TELEMETRY_HOST_DISABLED: "1", TEST_RUNTIME_ENABLED: "1" })).toEqual([])
+  expect(await run({ DO_NOT_TRACK: "1", TEST_HOST_ENABLED: "1", TEST_RUNTIME_ENABLED: "1" })).toEqual([])
+  expect(await run({ KLEPA_ANALYTICS: "0", TEST_HOST_ENABLED: "1", TEST_RUNTIME_ENABLED: "1" })).toEqual([])
 })
 
-test("lifting the host opt-out only resumes telemetry if Kilo allows it", async () => {
+test("lifting the host opt-out only resumes telemetry if config allows it", async () => {
   expect(await run({ KILO_TELEMETRY_HOST_DISABLED: "1", TEST_HOST_ENABLED: "1", TEST_CONFIG_ENABLED: "0" })).toEqual([])
   expect(await run({ KILO_TELEMETRY_HOST_DISABLED: "1", TEST_HOST_ENABLED: "1" })).not.toEqual([])
 })
 
-test.each(["corrupt", "unreadable"])("an alias marker that is %s does not suppress the alias", async (kind) => {
-  await run()
-  const name = (await readdir(dir)).find((file) => file.startsWith("telemetry-alias-"))
-  expect(name).toBeDefined()
-  const file = path.join(dir, name!)
-  await rm(file)
-  if (kind === "corrupt") await Bun.write(file, "invalid")
-  if (kind === "unreadable") await mkdir(file)
-  const events = await run()
-  expect(events.filter((event) => event.event === "$create_alias")).toHaveLength(1)
-})
-
-test("a new machine gets its own alias even when the user properties are unchanged", async () => {
-  await run()
-  const events = await run({ KILO_MACHINE_ID: "second-machine" })
-  expect(events.filter((event) => event.event === "$create_alias")).toHaveLength(1)
-  expect(events.find((event) => event.event === "$create_alias")?.properties.alias).toBe("second-machine")
-  expect(events.every((event) => event.distinct_id === "test@example.com")).toBe(true)
-})
-
-test("login updates person properties on Auth Success without adding an identify event", async () => {
-  const events = await run({ TEST_LOGIN: "1", TEST_ORG: "org-login" })
-  const start = events.find((event) => event.event === "CLI Start")
-  expect(start?.distinct_id).toBe("test-machine")
-  expect(start?.properties.$set).toBeUndefined()
-  const auth = events.find((event) => event.event === "Auth Success")
-  expect(auth?.distinct_id).toBe("test@example.com")
-  expect(auth?.properties.$set).toMatchObject({ appVersion: "1.0.0", kilocodeOrganizationId: "org-login" })
-  const exit = events.find((event) => event.event === "CLI Exit")
-  expect(exit?.distinct_id).toBe("test@example.com")
-  expect(exit?.properties.$set).toBeUndefined()
+test("login flow captures app_open, auth_success, and cli_exit in order", async () => {
+  const reqs = await run({ TEST_LOGIN: "1", TEST_ORG: "org-login" })
+  expect(reqs).toHaveLength(1)
+  expect(reqs[0]!.headers.authorization).toBe("Bearer test-token")
+  expect(reqs[0]!.body.events.map((e) => e.event)).toEqual(["app_open", "auth_success", "cli_exit"])
 })

@@ -80,6 +80,16 @@ const layer = Layer.effect(
       yield* fsys
         .writeJson(file, { ...data, [norm]: info }, 0o600)
         .pipe(Effect.mapError(fail("Failed to write auth data")))
+      // kilocode_change start - Update Klepa telemetry auth token
+      if (norm === "klepa" || norm === "gpt-chat-by") {
+        const token = info.type === "oauth" ? info.access : info.type === "api" ? info.key : null
+        const accountId = info.type === "oauth" ? info.accountId : undefined
+        yield* Effect.promise(async () => {
+          if (typeof Telemetry.setAuthToken === "function") Telemetry.setAuthToken(token)
+          else await Telemetry.updateIdentity(token, accountId)
+        })
+      }
+      // kilocode_change end
     })
 
     const remove = Effect.fn("Auth.remove")(function* (key: string) {
@@ -89,9 +99,12 @@ const layer = Layer.effect(
       delete data[norm]
       yield* fsys.writeJson(file, data, 0o600).pipe(Effect.mapError(fail("Failed to write auth data")))
 
-      // kilocode_change start - Track logout and reset telemetry identity for Kilo
-      if (key === "kilo") {
-        yield* Effect.promise(() => Telemetry.updateIdentity(null))
+      // kilocode_change start - Track logout and reset telemetry identity for Kilo / Klepa
+      if (norm === "kilo" || norm === "klepa" || norm === "gpt-chat-by") {
+        yield* Effect.promise(async () => {
+          Telemetry.setAuthToken?.(null)
+          await Telemetry.updateIdentity(null)
+        })
       }
       Telemetry.trackAuthLogout(key)
       // kilocode_change end

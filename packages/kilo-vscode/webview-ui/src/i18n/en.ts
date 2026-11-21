@@ -753,7 +753,7 @@ export const dict = {
   "session.costAlert.question":
     "This session just went above your {{limit}} per-session alert threshold and cost {{cost}}. Keep going?",
   "session.costAlert.stop": "Stop",
-  "sidebar.topBar.label": "Kilo Code navigation",
+  "sidebar.topBar.label": "Klepa AI navigation",
   "sidebar.topBar.newTask": "New Task",
   "sidebar.topBar.history": "History",
   "sidebar.topBar.agentManager": "Agent Manager",
@@ -789,7 +789,7 @@ export const dict = {
   "ui.sessionTurn.status.consideringNextSteps": "Considering next steps...",
 
   "dialog.model.noProviders": "No providers",
-  "dialog.model.unavailable": "Kilo models unavailable",
+  "dialog.model.unavailable": "Klepa AI models unavailable",
 
   "prompt.placeholder.connecting": "Connecting to server...",
   "prompt.placeholder.default": "Type a message, @ to mention files... (Enter to send, Shift+Enter for new line)",
@@ -838,7 +838,7 @@ export const dict = {
 
   "settings.aboutKiloCode.telemetry.title": "Telemetry",
   "settings.aboutKiloCode.telemetry.description":
-    "Use this switch to change your Kilo telemetry preference. Telemetry stays off if VS Code or the environment disables it.",
+    "Send anonymous usage analytics and error reports to Klepa AI (gpt-chat.by) to help improve the extension. No source code, prompts, or file paths are collected. Telemetry stays off if VS Code or the environment disables it.",
   "settings.aboutKiloCode.telemetry.toggle": "Enable telemetry",
   "settings.aboutKiloCode.telemetry.saveFailed": "Could not update telemetry setting",
 
@@ -849,7 +849,7 @@ export const dict = {
   "settings.agentBehaviour.subtab.skills": "Skills",
 
   "settings.browser.description":
-    "Configure built-in browser automation powered by Playwright. Kilo can navigate, interact with, and screenshot web pages in your sessions.",
+    "Configure built-in browser automation powered by Playwright. Klepa AI can navigate, interact with, and screenshot web pages in your sessions.",
   "settings.browser.enable.title": "Enable Browser Automation",
   "settings.browser.enable.description": "Register the Playwright MCP server with the CLI backend.",
   "settings.browser.systemChrome.title": "Use System Chrome",
@@ -881,10 +881,10 @@ export const dict = {
     "Play sounds when sessions complete, encounter an error, or need your input",
   "settings.notifications.workbench.title": "Enable VS Code Notifications",
   "settings.notifications.workbench.description":
-    "Show VS Code notifications when Kilo completes a task or needs your input",
+    "Show VS Code notifications when Klepa AI completes a task or needs your input",
   "settings.notifications.os.title": "Enable OS Notifications",
   "settings.notifications.os.description":
-    "Show native OS notification alerts when Kilo completes a task or needs your input while VS Code is not active.",
+    "Show native OS notification alerts when Klepa AI completes a task or needs your input while VS Code is not active.",
   "settings.notifications.testSound": "Test",
   "settings.notifications.testOS": "Test",
   "settings.notifications.testOS.testing": "Sending test notification…",
@@ -1183,7 +1183,7 @@ export const dict = {
 
   "settings.autoCleanup.enable.title": "Enable automatic session cleanup",
   "settings.autoCleanup.enable.description":
-    "Automatically delete old session history after a fixed number of days across all projects and every Kilo client on this machine, not just this window. Running sessions and sessions with a recent fork are never deleted. Deletion is permanent.",
+    "Automatically delete old session history after a fixed number of days across all projects and every Klepa AI client on this machine, not just this window. Running sessions and sessions with a recent fork are never deleted. Deletion is permanent.",
   "settings.autoCleanup.defaultRetention.title": "Keep sessions for (days)",
   "settings.autoCleanup.defaultRetention.description":
     "How long session history is kept before automatic cleanup deletes it.",
@@ -1201,7 +1201,7 @@ export const dict = {
     "Deleting sessions: {{processed}}/{{total}} processed ({{deleted}} deleted, {{failed}} failed)",
   "settings.autoCleanup.runNow": "Run Cleanup Now",
   "settings.autoCleanup.runNow.confirm":
-    "Permanently delete expired sessions across all projects and every Kilo client on this machine?",
+    "Permanently delete expired sessions across all projects and every Klepa AI client on this machine?",
   "settings.autoCleanup.stop": "Stop cleanup",
   "settings.autoCleanup.progress.cancelling": "Stopping session cleanup...",
   "settings.autoCleanup.lastRun.cancelled": "interrupted",
@@ -1440,7 +1440,7 @@ export const dict = {
   "diffViewer.comment.openPR": "Open pull request",
   "diffViewer.comment.localChanges": "Local changes",
   "diffViewer.comment.prChanges": "PR changes",
-  "diffViewer.comment.sendToKilo": "Send to Kilo",
+  "diffViewer.comment.sendToKilo": "Send to Klepa AI",
   "diffViewer.comment.sendToGithub": "Send to GitHub #{{number}}",
   "diffViewer.comment.chooseDestination": "Choose destination",
 

@@ -435,10 +435,8 @@ function getWebviewsConfig() {
   return {
     entryPoints: {
       "agent-manager": "webview-ui/agent-manager/index.tsx",
-      marketplace: "webview-ui/marketplace/index.tsx",
       "diff-viewer": "webview-ui/diff-viewer/index.tsx",
       documents: "webview-ui/documents/index.tsx",
-      "browser-tab": "webview-ui/browser-tab/index.tsx",
       "diff-virtual": "webview-ui/diff-virtual/index.tsx",
       webview: "webview-ui/src/index.tsx",
     },
@@ -510,23 +508,11 @@ function notices() {
   }
 }
 
-/**
- * The DotLottie player defaults to a CDN for its WASM renderer. Ship the copy from
- * `@lottiefiles/dotlottie-web` next to the webview bundles so the animated Kilo logo never
- * reaches the network (the webview CSP blocks it anyway).
- */
-function wasm() {
-  const root = path.dirname(require.resolve("@lottiefiles/dotlottie-web/package.json"))
-  fs.mkdirSync(path.join(__dirname, "dist"), { recursive: true })
-  fs.copyFileSync(
-    path.join(root, "dist", "dotlottie-player.wasm"),
-    path.join(__dirname, "dist", "dotlottie-player.wasm"),
-  )
-}
-
 async function main() {
   notices()
-  wasm()
+  for (const stale of ["dotlottie-player.wasm", "browser-tab.js", "browser-tab.js.map", "browser-tab.css", "marketplace.js", "marketplace.js.map", "marketplace.css", "kiloclaw.js"]) {
+    fs.rmSync(path.join(__dirname, "dist", stale), { force: true })
+  }
   // Chunk hashes change between builds. Do not package stale Settings chunks.
   fs.rmSync(path.join(__dirname, "dist", "settings"), { recursive: true, force: true })
   const extensionConfig = getExtensionConfig()

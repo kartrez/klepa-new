@@ -290,7 +290,6 @@ describe("Extension — KiloProvider handler wiring", () => {
     const resolve = body.indexOf("resolveWebviewPanel")
     expect(resolve, "resolveWebviewPanel must be called").toBeGreaterThan(-1)
     for (const name of [
-      "setRemoteService",
       "setAutoApproveController",
       "setContinueInWorktreeHandler",
       "setCreateWorktreeHandler",
@@ -354,16 +353,17 @@ describe("Extension — editor panel placement", () => {
 // it silently no-op'd, leaving the UI stuck.
 // ---------------------------------------------------------------------------
 
-describe("Extension — Agent Manager remote wiring", () => {
+describe("Extension — Agent Manager remote wiring disabled", () => {
   const ext = fs.readFileSync(EXTENSION_FILE, "utf-8")
   const host = fs.readFileSync(VSCODE_HOST_FILE, "utf-8")
 
-  it("passes the shared remote service to Agent Manager", () => {
-    expect(ext).toContain("new VscodeHost(context.extensionUri, connectionService, context, remoteService, controls)")
+  it("does not construct or pass RemoteStatusService in extension.ts", () => {
+    expect(ext).not.toContain("new RemoteStatusService")
+    expect(ext).toContain("new VscodeHost(context.extensionUri, connectionService, context)")
   })
 
-  it("wires the remote service before attaching the Agent Manager webview", () => {
-    const remote = host.indexOf("provider.setRemoteService(this.remoteService)")
+  it("gates provider.setRemoteService on optional remoteService", () => {
+    const remote = host.indexOf("if (this.remoteService) provider.setRemoteService(this.remoteService)")
     const attach = host.indexOf("provider.attachToWebview")
     expect(remote).toBeGreaterThan(-1)
     expect(attach).toBeGreaterThan(-1)

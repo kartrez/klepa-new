@@ -1,28 +1,13 @@
-import * as path from "path"
-import { createHash } from "crypto"
-import { writeFile, chmod, rename, rm } from "fs/promises"
-import { fetchProfile } from "@kilocode/kilo-gateway"
+import * as path from "node:path"
+
+const INSTALLATION_ID_RE = /^[a-zA-Z0-9._-]{8,64}$/
 
 export namespace Identity {
   let machineId: string | null = null
-  let userId: string | null = null
+  let fallbackInstallationId: string | null = null
+  let authToken: string | null = null
   let organizationId: string | null = null
   let dataPath = ""
-
-  // Cache the email resolved from the auth token so CLI startup does not block on
-  // a profile request for every invocation. Keyed by token hash; refreshed when
-  // the token changes. Stale entries (older than a week) are still used for the
-  // current run and refreshed on a best-effort basis for a later run: the
-  // background refresh is not awaited, so short-lived invocations may exit before
-  // it completes and simply retry next time.
-  const CACHE_FILE = "telemetry-profile.json"
-  const CACHE_TTL = 7 * 24 * 60 * 60 * 1000
-
-  interface Cache {
-    token: string
-    email: string
-    fetchedAt: number
-  }
 
   export function setDataPath(p: string) {
     dataPath = p
@@ -30,7 +15,7 @@ export namespace Identity {
 
   export async function getMachineId(): Promise<string | undefined> {
     if (machineId) return machineId
-    const override = process.env.KILO_MACHINE_ID
+    const override = process.env.KILO_MACHINE_ID?.trim()
     if (override) {
       machineId = override
       return machineId
@@ -43,8 +28,11 @@ export namespace Identity {
     const file = Bun.file(filepath)
 
     if (await file.exists()) {
-      machineId = await file.text()
-      return machineId
+      const existing = (await file.text()).trim()
+      if (existing) {
+        machineId = existing
+        return machineId
+      }
     }
 
     machineId = crypto.randomUUID()
@@ -52,12 +40,20 @@ export namespace Identity {
     return machineId
   }
 
+  export function getInstallationId(): string {
+    const raw = machineId?.trim() || process.env.KILO_MACHINE_ID?.trim() || ""
+    const sanitized = raw.replace(/[^a-zA-Z0-9._-]/g, "").slice(0, 64)
+    if (INSTALLATION_ID_RE.test(sanitized)) return sanitized
+    fallbackInstallationId ??= crypto.randomUUID()
+    return fallbackInstallationId
+  }
+
   export function getDistinctId(): string {
-    return userId || machineId || "unknown"
+    return machineId || "unknown"
   }
 
   export function getUserId(): string | null {
-    return userId
+    return null
   }
 
   export function getOrganizationId(): string | null {
@@ -68,72 +64,24 @@ export namespace Identity {
     organizationId = orgId
   }
 
-  function digest(token: string): string {
-    return createHash("sha256").update(token).digest("hex")
+  export function setAuthToken(token: string | null) {
+    const trimmed = typeof token === "string" ? token.trim() : ""
+    authToken = trimmed.length > 0 ? trimmed : null
   }
 
-  async function read(): Promise<Cache | null> {
-    if (!dataPath) return null
-    const file = Bun.file(path.join(dataPath, CACHE_FILE))
-    if (!(await file.exists())) return null
-    const parsed = await file.json().catch(() => null)
-    if (!parsed || typeof parsed.token !== "string" || typeof parsed.email !== "string") return null
-    if (typeof parsed.fetchedAt !== "number") return null
-    return parsed as Cache
-  }
-
-  async function write(cache: Cache): Promise<void> {
-    if (!dataPath) return
-    const filepath = path.join(dataPath, CACHE_FILE)
-    // The cache stores the user's email and a token verifier, so keep it
-    // readable only by the owner, including when replacing an existing file.
-    // Write to a temp file and rename so concurrent invocations or a mid-write
-    // kill cannot leave a truncated cache behind (POSIX rename is atomic).
-    const tmp = `${filepath}.${process.pid}.tmp`
-    try {
-      await writeFile(tmp, JSON.stringify(cache), { mode: 0o600 })
-      await chmod(tmp, 0o600)
-      await rename(tmp, filepath)
-    } catch (err) {
-      await rm(tmp, { force: true }).catch((rmErr) => {
-        if (process.env.KILO_PRINT_LOGS) console.warn("telemetry profile cache temp cleanup failed", rmErr)
-      })
-      if (process.env.KILO_PRINT_LOGS) console.warn("telemetry profile cache write failed", err)
-    }
-  }
-
-  async function refresh(token: string, tokenHash: string): Promise<void> {
-    const profile = await fetchProfile(token).catch(() => null)
-    if (profile?.email) await write({ token: tokenHash, email: profile.email, fetchedAt: Date.now() })
+  export function getAuthToken(): string | null {
+    return authToken
   }
 
   export async function updateFromKiloAuth(token: string | null, accountId?: string): Promise<void> {
     organizationId = accountId || null
-
-    if (!token) {
-      userId = null
-      return
-    }
-
-    const tokenHash = digest(token)
-    const cached = await read()
-    if (cached && cached.token === tokenHash) {
-      userId = cached.email
-      if (Date.now() - cached.fetchedAt > CACHE_TTL) {
-        refresh(token, tokenHash).catch((err) => {
-          if (process.env.KILO_PRINT_LOGS) console.warn("telemetry profile refresh failed", err)
-        })
-      }
-      return
-    }
-
-    const profile = await fetchProfile(token).catch(() => null)
-    userId = profile?.email || null
-    if (profile?.email) await write({ token: tokenHash, email: profile.email, fetchedAt: Date.now() })
+    setAuthToken(token)
   }
 
   export function reset() {
-    userId = null
+    machineId = null
+    fallbackInstallationId = null
+    authToken = null
     organizationId = null
   }
 }

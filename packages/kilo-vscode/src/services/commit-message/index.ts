@@ -59,8 +59,8 @@ export function registerCommitMessageService(
       try {
         client = await connectionService.getClientAsync(path)
       } catch (err) {
-        console.error("[Kilo New] Failed to connect to Kilo backend:", err)
-        vscode.window.showErrorMessage("Failed to connect to Kilo backend. Please try again.")
+        console.error("[Kilo New] Failed to connect to Klepa AI backend:", err)
+        vscode.window.showErrorMessage("Failed to connect to Klepa AI backend. Please try again.")
         return
       }
 

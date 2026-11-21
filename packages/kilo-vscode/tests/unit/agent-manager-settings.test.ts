@@ -64,6 +64,7 @@ describe("Agent Manager application settings", () => {
   it("does not register a multi-project opt-in setting", async () => {
     const manifest = await Bun.file(join(ROOT, "package.json")).json()
     expect(manifest.contributes.configuration.properties).not.toHaveProperty("kilo-code.new.experimental.multiProject")
+    expect(manifest.contributes.configuration.properties["kilo-code.new.agentManager.worktreePool"]?.default).toBe(false)
   })
 
   it.each([
@@ -120,13 +121,8 @@ describe("Agent Manager application settings", () => {
 })
 
 describe("Claude migration application setting", () => {
-  it("declares an opt-in application setting", () => {
-    expect(PACKAGE.contributes.configuration.properties["kilo-code.new.experimental.claudeMigration"]).toEqual({
-      type: "boolean",
-      default: false,
-      scope: "application",
-      description: expect.any(String),
-    })
+  it("does not declare the removed claudeMigration application setting in package.json", () => {
+    expect(PACKAGE.contributes.configuration.properties["kilo-code.new.experimental.claudeMigration"]).toBeUndefined()
   })
 
   it("loads and saves the migration setting globally", async () => {

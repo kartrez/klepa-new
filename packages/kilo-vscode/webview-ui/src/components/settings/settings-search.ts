@@ -47,17 +47,10 @@ export const SETTINGS_TABS: SettingsTab[] = [
   { id: "browser", titleKey: "settings.webTools.title", keywords: ["browser", "web", "chrome", "playwright"] },
   { id: "checkpoints", titleKey: "settings.checkpoints.title", keywords: ["checkpoint", "undo", "cleanup"] },
   { id: "display", titleKey: "settings.display.title", keywords: ["display", "ui", "font", "theme"] },
-  { id: "autocomplete", titleKey: "settings.autocomplete.title", keywords: ["completion", "inline", "suggest"] },
   { id: "notifications", titleKey: "settings.notifications.title", keywords: ["notification", "sound", "alert"] },
-  { id: "context", titleKey: "settings.context.title", keywords: ["memory", "compaction", "prune"] },
+  { id: "context", titleKey: "settings.context.title", keywords: ["compaction", "prune"] },
   { id: "commitMessage", titleKey: "settings.commitMessage.title", keywords: ["commit", "git", "message"] },
   { id: "experimental", titleKey: "settings.experimental.title", keywords: ["beta", "flag", "preview"] },
-  {
-    id: "sandboxing",
-    titleKey: "settings.sandboxing.title",
-    keywords: ["sandbox", "security", "network"],
-    conditional: true,
-  },
   { id: "language", titleKey: "settings.language.title", keywords: ["locale", "translation"] },
   { id: "aboutKiloCode", titleKey: "settings.aboutKiloCode.title", keywords: ["version", "update", "support"] },
 ]
@@ -71,7 +64,6 @@ const GROUP_TABS: Record<string, string> = {
   agentBehaviour: "agentBehaviour",
   autoApprove: "autoApprove",
   autoCleanup: "checkpoints",
-  autocomplete: "autocomplete",
   browser: "browser",
   checkpoints: "checkpoints",
   commitMessage: "commitMessage",
@@ -83,14 +75,12 @@ const GROUP_TABS: Record<string, string> = {
   notifications: "notifications",
   permissions: "autoApprove",
   providers: "models",
-  sandboxing: "sandboxing",
   webTools: "browser",
 }
 
 /** Rows whose group tab differs from the tab that actually renders them. */
 const KEY_TAB_OVERRIDES: Record<string, string> = {
   "settings.context.compactionModel.title": "models",
-  "settings.autocomplete.model.title": "models",
 }
 
 /** i18n `*.title` keys under a mapped group that are not rendered rows. */
@@ -101,6 +91,17 @@ const EXCLUDED_KEYS = new Set([
   "agentManager.browser.title",
   "settings.experimental.share.title",
   "settings.experimental.remote.title",
+  "settings.experimental.nativeNotebookTools.title",
+  "settings.experimental.codeMode.title",
+  "settings.experimental.claudeMigration.title",
+  "settings.experimental.browserAutomation.title",
+  "settings.experimental.browserLinks.title",
+  "settings.experimental.browserAutomation.systemChrome.title",
+  "settings.agentBehaviour.sharedAgentBoard.title",
+  "settings.context.memory.title",
+  "settings.context.memory.project.title",
+  "settings.context.memory.autoSave.title",
+  "settings.context.memory.storage.title",
   "settings.models.speechToTextModel.title",
   "settings.models.speechToTextBaseUrl.title",
   "settings.models.speechToTextApiKey.title",

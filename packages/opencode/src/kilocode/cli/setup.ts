@@ -1,5 +1,4 @@
 import type { Argv } from "yargs"
-import type { Auth } from "@/auth"
 import * as Log from "@opencode-ai/core/util/log"
 import { InstallationBuildKind, InstallationVersion } from "@opencode-ai/core/installation/version"
 import { KiloShutdown } from "@/kilocode/cli/shutdown"
@@ -102,29 +101,25 @@ export namespace KiloCli {
       enabled: cfg.experimental?.openTelemetry !== false,
     })
 
-    const { migrateLegacyKiloAuth } = gateway
-    const getAuth = async () => {
-      if (runtime) return runtime.KiloCliBootstrapRuntime.getAuth()
-      const { Auth } = await import("@/auth")
-      return app!.AppRuntime.runPromise(Auth.Service.use((s) => s.get("kilo")))
-    }
-    const setAuth = async (auth: Auth.Info) => {
-      if (runtime) return runtime.KiloCliBootstrapRuntime.setAuth(auth)
-      const { Auth } = await import("@/auth")
-      return app!.AppRuntime.runPromise(Auth.Service.use((s) => s.set("kilo", auth)))
-    }
-
-    // Migrate legacy Kilo CLI auth (~/.kilocode/cli/config.json) into auth.json if present.
-    await migrateLegacyKiloAuth(
-      async () => (await getAuth()) !== undefined,
-      setAuth,
-    )
-
-    const auth = await getAuth()
-    if (auth) {
-      const token = auth.type === "oauth" ? auth.access : auth.key
-      const account = auth.type === "oauth" ? auth.accountId : undefined
-      await Telemetry.updateIdentity(token, account)
+    // Klepa: do not migrate legacy ~/.kilocode/cli/config.json auth so upstream Kilo cloud/ingest services stay disabled.
+    try {
+      const { Auth } = runtime ? { Auth: undefined } : await import("@/auth")
+      const readAuth = (providerID: string) =>
+        runtime
+          ? runtime.KiloCliBootstrapRuntime.getAuth(providerID)
+          : app!.AppRuntime.runPromise(Auth!.Service.use((service) => service.get(providerID)))
+      const info = (await readAuth("klepa")) ?? (await readAuth("gpt-chat-by"))
+      if (info) {
+        const token = info.type === "oauth" ? info.access : info.type === "api" ? info.key : null
+        const accountId = info.type === "oauth" ? info.accountId : undefined
+        if (typeof Telemetry.setAuthToken === "function") {
+          Telemetry.setAuthToken(token)
+        } else {
+          await Telemetry.updateIdentity(token, accountId)
+        }
+      }
+    } catch (err) {
+      log.warn("klepa telemetry auth lookup failed", { err })
     }
 
     Telemetry.trackCliStart()

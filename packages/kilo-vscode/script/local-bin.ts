@@ -3,17 +3,6 @@ import { $ } from "bun"
 import { createHash } from "node:crypto"
 import { join, relative, dirname, basename } from "node:path"
 import { chmodSync, statSync, rmSync, readdirSync, existsSync } from "node:fs"
-import {
-  copyKiloSandboxWorker,
-  copySandboxResources,
-  copyTreeSitterResources,
-  hasKiloSandboxWorker,
-  hasTreeSitterResources,
-  kiloSandboxWorkerForBinary,
-  sanitizeSandboxResources,
-} from "../src/services/cli-backend/cli-resources"
-import { currentBwrapTarget, ensureBwrapForTarget } from "./bwrap-helper"
-import { currentFfmpegTarget, ensureFfmpegForTarget } from "./ffmpeg-helper"
 
 const forceRebuild = process.argv.includes("--force")
 const compiledOnly = process.argv.includes("--compiled")
@@ -34,7 +23,6 @@ const kiloVscodeDir = join(import.meta.dir, "..")
 const packagesDir = join(kiloVscodeDir, "..")
 const repoDir = join(packagesDir, "..")
 const opencodeDir = join(packagesDir, "opencode")
-const sandboxDir = join(packagesDir, "kilo-sandbox")
 const rootFile = join(repoDir, "package.json")
 
 const targetBinDir = join(kiloVscodeDir, "bin")
@@ -86,22 +74,17 @@ async function cliInputs() {
     for (const dep of Object.keys(deps)) visit(dep)
   }
 
-  // The CLI build embeds the console even though it is not a package dependency.
-  for (const dir of [opencodeDir, join(packagesDir, "kilo-console")]) {
-    const pkg: Package = await Bun.file(join(dir, "package.json")).json()
-    if (!pkg.name) throw new Error(`Workspace package at ${dir} has no name`)
-    visit(pkg.name)
-  }
+  // The CLI build does not need kilo-console embedded for Klepa VS Code.
+  const opencodePkg: Package = await Bun.file(join(opencodeDir, "package.json")).json()
+  if (!opencodePkg.name) throw new Error(`Workspace package at ${opencodeDir} has no name`)
+  visit(opencodePkg.name)
 
   return [
     relative(repoDir, rootFile),
     "bun.lock",
     "patches",
     ...[...dirs].sort(),
-    "packages/kilo-vscode/script/bwrap-helper.ts",
-    "packages/kilo-vscode/script/ffmpeg-helper.ts",
     "packages/kilo-vscode/script/local-bin.ts",
-    "packages/kilo-vscode/src/services/cli-backend/cli-resources.ts",
   ]
 }
 
@@ -229,7 +212,6 @@ async function findKiloBinaryInOpencodeDist(): Promise<string | null> {
         continue
       }
       if (e.isFile() && (e.name === "kilo" || e.name === "kilo.exe") && basename(dirname(p)) === "bin") {
-        if (!hasTreeSitterResources(p) || !hasKiloSandboxWorker(p)) continue
         return p
       }
     }
@@ -271,24 +253,6 @@ async function ensureBuiltBinary(): Promise<string> {
   return built
 }
 
-async function bundleKiloSandboxWorker() {
-  const result = await Bun.build({
-    entrypoints: [join(sandboxDir, "src", "kilo-sandbox-mutation-worker.ts")],
-    target: "bun",
-    format: "esm",
-    minify: true,
-  })
-  if (!result.success || result.outputs.length !== 1) throw new Error("Could not bundle Kilo sandbox mutation worker")
-  await Bun.write(kiloSandboxWorkerForBinary(targetBinPath), result.outputs[0])
-}
-
-async function ensureLocalHelpers() {
-  await ensureFfmpegForTarget(currentFfmpegTarget(), targetBinDir)
-  if (process.env.KILO_SKIP_BUNDLED_BWRAP === "1") return
-  if (await sanitizeSandboxResources(targetBinDir, true)) return
-  await ensureBwrapForTarget(currentBwrapTarget())
-}
-
 async function writeSourceWrapper() {
   if (process.platform === "win32") {
     throw new Error("Compiled CLI build failed and source wrapper fallback is not supported on Windows.")
@@ -307,8 +271,6 @@ async function writeSourceWrapper() {
     ].join("\n"),
   )
   chmodSync(targetBinPath, 0o755)
-  await bundleKiloSandboxWorker()
-  await ensureLocalHelpers()
 
   await writeVersion("wrapper")
   log(
@@ -316,13 +278,17 @@ async function writeSourceWrapper() {
   )
 }
 
-async function main() {
-  for (const file of [join(targetBinDir, ".cli-version"), join(targetBinDir, ".ffmpeg-target")]) {
-    rmSync(file, { force: true })
+function cleanStaleBinHelpers() {
+  for (const name of ["tree-sitter", "licenses", "kilo-sandbox-mutation-worker.js", "kilo-sandbox-network-relay", "kilo-bwrap", "ffmpeg", "ffmpeg.exe", ".cli-version", ".ffmpeg-target"]) {
+    rmSync(join(targetBinDir, name), { recursive: true, force: true })
   }
+}
+
+async function main() {
+  cleanStaleBinHelpers()
   const targetFile = Bun.file(targetBinPath)
   const exists = await targetFile.exists()
-  const ready = exists && hasTreeSitterResources(targetBinPath) && hasKiloSandboxWorker(targetBinPath)
+  const ready = exists
 
   const stale = ready && !forceRebuild && (await isStale())
   const rebuild = forceRebuild || stale || !ready
@@ -332,7 +298,6 @@ async function main() {
     log(
       `CLI binary already present at ${relative(kiloVscodeDir, targetBinPath)} (${Math.round(st.size / 1024 / 1024)}MB). Use --force to rebuild.`,
     )
-    await ensureLocalHelpers()
     return
   }
 
@@ -362,11 +327,7 @@ async function main() {
   if (!sourceBinPath) return
   await $`mkdir -p ${targetBinDir}`
   await $`cp ${sourceBinPath} ${targetBinPath}`
-  await copyTreeSitterResources(sourceBinPath, targetBinPath)
-  await copySandboxResources(sourceBinPath, targetBinPath)
-  await copyKiloSandboxWorker(sourceBinPath, targetBinPath)
   chmodSync(targetBinPath, 0o755)
-  await ensureLocalHelpers()
 
   await writeVersion("compiled")
 

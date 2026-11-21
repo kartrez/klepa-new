@@ -2,7 +2,21 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { configFeatures } from "../../src/features"
 import { visible } from "../../webview-ui/src/components/settings/sandboxing"
 
-const features = { indexing: false, sandboxControls: false, backgroundSubagents: false }
+const features = {
+  indexing: false,
+  sandboxControls: false,
+  autocomplete: false,
+  backgroundSubagents: false,
+  speechToText: false,
+  marketplace: false,
+  remoteControl: false,
+  integratedBrowser: false,
+  projectMemory: false,
+  swarm: false,
+  codeMode: false,
+  caffeination: false,
+  nativeNotebookTools: false,
+}
 const platform = Object.getOwnPropertyDescriptor(process, "platform")
 
 function setPlatform(value: string) {
@@ -26,15 +40,13 @@ describe("Sandboxing settings visibility", () => {
     expect(src).not.toContain("const { config, updateConfig } = useConfig()")
   })
 
-  test("shows sandbox controls outside Windows", () => {
+  test("hides sandbox controls on all platforms", () => {
     setPlatform("darwin")
-    expect(configFeatures().sandboxControls).toBe(true)
+    expect(configFeatures().sandboxControls).toBe(false)
 
     setPlatform("linux")
-    expect(configFeatures().sandboxControls).toBe(true)
-  })
+    expect(configFeatures().sandboxControls).toBe(false)
 
-  test("hides sandbox controls on Windows", () => {
     setPlatform("win32")
     expect(configFeatures().sandboxControls).toBe(false)
   })

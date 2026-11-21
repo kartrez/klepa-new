@@ -52,7 +52,7 @@ function same(a: unknown, b: unknown): boolean {
 }
 
 /** Fetch provider availability and authentication state without exposing stored credentials. */
-export async function fetchProviderData(client: KiloClient, dir: string) {
+export async function fetchProviderData(client: KiloClient, dir: string, includeKilo = true) {
   const authRequest =
     typeof client.provider.auth === "function"
       ? client.provider
@@ -60,10 +60,12 @@ export async function fetchProviderData(client: KiloClient, dir: string) {
           .then((r) => r.data ?? {})
           .catch(() => ({}))
       : Promise.resolve({})
-  const kiloRequest = client.kilo
-    .authStatus({ directory: dir }, { throwOnError: true })
-    .then((r) => r.data)
-    .catch(() => undefined)
+  const kiloRequest = includeKilo
+    ? client.kilo
+        .authStatus({ directory: dir }, { throwOnError: true })
+        .then((r) => r.data)
+        .catch(() => undefined)
+    : Promise.resolve(undefined)
 
   const [{ data: response }, authMethods, kiloAuth] = await Promise.all([
     client.provider.list({ directory: dir }, { throwOnError: true }),

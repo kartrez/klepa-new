@@ -74,7 +74,7 @@ export interface SlashCommand {
 
 export function useSlashCommand(
   vscode: VSCodeContext,
-  sandbox: { action: () => void; enabled: Accessor<boolean> },
+  _sandbox: { action: () => void; enabled: Accessor<boolean> },
   exclude?: Set<string> | Accessor<Set<string>>,
   include?: Set<string> | Accessor<Set<string>>,
   scope?: string,
@@ -148,24 +148,6 @@ export function useSlashCommand(
       },
     },
     {
-      name: "memory",
-      description: "Manage project memory",
-      hints: ["mem"],
-      nested: true,
-    },
-    { name: "memory status", description: "Show project memory status", hints: [] },
-    { name: "memory show", description: "Show stored project memory", hints: [] },
-    { name: "memory on", description: "Enable project memory", hints: [] },
-    { name: "memory off", description: "Disable project memory", hints: [] },
-    { name: "memory inspect", description: "Reveal the project memory folder", hints: [] },
-    { name: "memory rebuild", description: "Rebuild the memory index", hints: [] },
-    { name: "memory remember", description: "Save a project memory note", hints: [] },
-    { name: "memory correct", description: "Save a correction to project memory", hints: [] },
-    { name: "memory forget", description: "Remove matching project memory", hints: [] },
-    { name: "memory auto on", description: "Enable automatic memory saves", hints: [] },
-    { name: "memory auto off", description: "Disable automatic memory saves", hints: [] },
-    { name: "memory purge confirm", description: "Delete all project memory files", hints: [] },
-    {
       name: "review",
       description: "Review code changes [uncommitted, staged, unpushed, branch, commit, pr]",
       hints: ["code-review", "diff"],
@@ -200,21 +182,6 @@ export function useSlashCommand(
       action: () => {
         vscode.postMessage({ type: "openSettingsPanel" })
       },
-    },
-    {
-      name: "remote",
-      description: "Toggle remote control",
-      hints: [],
-      action: () => {
-        vscode.postMessage({ type: "toggleRemote" })
-      },
-    },
-    {
-      name: "sandbox",
-      description: "Toggle sandbox",
-      hints: [],
-      action: sandbox.action,
-      enabled: sandbox.enabled,
     },
     {
       name: "reload",

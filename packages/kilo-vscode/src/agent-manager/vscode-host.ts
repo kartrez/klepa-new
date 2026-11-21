@@ -47,7 +47,7 @@ export class VscodeHost implements Host {
     private readonly extensionUri: vscode.Uri,
     private readonly connectionService: KiloConnectionService,
     private readonly context: vscode.ExtensionContext,
-    private readonly remoteService: RemoteStatusService,
+    private readonly remoteService?: RemoteStatusService,
     private readonly caffeination?: Pick<CaffeinationService, "getState" | "onChange" | "setEnabled">,
   ) {}
 
@@ -159,25 +159,10 @@ export class VscodeHost implements Host {
     if (this.diffVirtual) {
       provider.setDiffVirtualProvider(this.diffVirtual)
     }
-    provider.setRemoteService(this.remoteService)
-    const snapshot = () => {
-      if (this.caffeination) {
-        void panel.webview.postMessage({ type: "agentManager.caffeination", ...this.caffeination.getState() })
-      }
-    }
-    const unsubscribe = this.caffeination?.onChange(snapshot)
-    panel.onDidDispose(() => {
-      unsubscribe?.()
-      this.focus?.lost()
-    })
+    if (this.remoteService) provider.setRemoteService(this.remoteService)
     provider.attachToWebview(panel.webview, {
       onBeforeMessage: async (msg) => {
-        if (msg.type === "agentManager.setCaffeination") {
-          if (typeof msg.enabled === "boolean") await this.caffeination?.setEnabled(msg.enabled)
-          return null
-        }
-        if (msg.type === "agentManager.requestCaffeination") {
-          snapshot()
+        if (msg.type === "agentManager.setCaffeination" || msg.type === "agentManager.requestCaffeination") {
           return null
         }
         if (msg.type === "agentManager.setSplashFolded") {
@@ -416,7 +401,7 @@ export class VscodeHost implements Host {
   }
 
   browserAutomation(): boolean {
-    return vscode.workspace.getConfiguration("kilo-code.new.experimental").get("browserAutomation", false)
+    return false
   }
 
   async approveBrowserNavigation(origin: string): Promise<boolean> {
@@ -429,7 +414,7 @@ export class VscodeHost implements Host {
   }
 
   worktreePool(): boolean {
-    return vscode.workspace.getConfiguration("kilo-code.new.agentManager").get("worktreePool", true)
+    return vscode.workspace.getConfiguration("kilo-code.new.agentManager").get("worktreePool", false)
   }
 
   readProjects(): unknown {

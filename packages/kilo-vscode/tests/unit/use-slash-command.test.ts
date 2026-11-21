@@ -129,7 +129,7 @@ describe("worktree update slash action", () => {
   })
 })
 
-describe("useSlashCommand sandbox action", () => {
+describe("useSlashCommand disabled and core actions", () => {
   it("supports the singular model alias", () => {
     const ctx = setup(() => {})
 
@@ -140,7 +140,7 @@ describe("useSlashCommand sandbox action", () => {
   })
 
   it("restricts client actions with include without hiding server commands", () => {
-    const ctx = setup(() => {}, { include: new Set(["models", "agents", "variant", "sandbox"]) })
+    const ctx = setup(() => {}, { include: new Set(["models", "agents", "variant"]) })
 
     ctx.fire({
       type: "commandsLoaded",
@@ -162,142 +162,12 @@ describe("useSlashCommand sandbox action", () => {
     ctx.dispose()
   })
 
-  it("opens project memory actions from the top-level command", () => {
+  it("excludes disabled memory, remote, and sandbox client commands", () => {
     const ctx = setup(() => {})
-    const state = { text: "/mem" }
-    const textarea = {
-      value: state.text,
-      setSelectionRange: () => {},
-      focus: () => {},
-    } as unknown as HTMLTextAreaElement
-
-    ctx.slash.onInput(state.text, state.text.length)
-
-    expect(ctx.slash.results()).toContainEqual(
-      expect.objectContaining({ name: "memory", description: "Manage project memory", hints: ["mem"] }),
-    )
-    ctx.slash.select(ctx.slash.results()[0]!, textarea, (text) => (state.text = text))
-    expect(state.text).toBe("/memory ")
-    expect(ctx.slash.results().map((command) => command.name)).toContain("memory inspect")
-    ctx.dispose()
-  })
-
-  it("offers memory actions after the parent command", () => {
-    const ctx = setup(() => {})
-
-    ctx.slash.onInput("/memory ", 8)
-
-    expect(ctx.slash.results().map((command) => command.name)).toEqual([
-      "memory status",
-      "memory show",
-      "memory on",
-      "memory off",
-      "memory inspect",
-      "memory rebuild",
-      "memory remember",
-      "memory correct",
-      "memory forget",
-      "memory auto on",
-      "memory auto off",
-      "memory purge confirm",
-    ])
-    ctx.dispose()
-  })
-
-  it("keeps nested memory actions out of root hint matching", () => {
-    const ctx = setup(() => {})
-    const nested = ctx.slash.commands().filter((command) => command.name.startsWith("memory "))
-
-    expect(nested.length).toBeGreaterThan(0)
-    expect(nested.every((command) => command.hints.length === 0)).toBe(true)
-    ctx.dispose()
-  })
-
-  it("completes nested memory actions and closes for free text", () => {
-    const ctx = setup(() => {})
-    const state = { text: "/mem rem" }
-    const textarea = {
-      value: state.text,
-      setSelectionRange: () => {},
-      focus: () => {},
-    } as unknown as HTMLTextAreaElement
-
-    ctx.slash.onInput(state.text, state.text.length)
-    expect(ctx.slash.results().map((command) => command.name)).toEqual(["memory remember"])
-    ctx.slash.select(ctx.slash.results()[0]!, textarea, (text) => (state.text = text))
-    expect(state.text).toBe("/memory remember ")
-
-    ctx.slash.onInput("/memory remember durable fact", 31)
-    expect(ctx.slash.show()).toBe(false)
-    ctx.dispose()
-  })
-
-  it("runs the sandbox toggle as a client command", () => {
-    const state = { toggles: 0, text: "/sandbox", prevented: 0 }
-    const ctx = setup(() => state.toggles++)
-    const textarea = {
-      value: state.text,
-      selectionStart: state.text.length,
-      setSelectionRange: () => {},
-    } as unknown as HTMLTextAreaElement
-    const event = {
-      key: "Enter",
-      isComposing: false,
-      preventDefault: () => state.prevented++,
-    } as unknown as KeyboardEvent
-
-    ctx.slash.onInput(state.text, state.text.length)
-    const handled = ctx.slash.onKeyDown(event, textarea, (text) => (state.text = text))
-
-    expect(handled).toBe(true)
-    expect(state.toggles).toBe(1)
-    expect(state.prevented).toBe(1)
-    expect(state.text).toBe("")
-    expect(textarea.value).toBe("")
-    expect(ctx.sent).toEqual([{ type: "requestCommands" }])
-    ctx.dispose()
-  })
-
-  it("keeps the command text when the sandbox control is disabled", () => {
-    const state = { toggles: 0, text: "/sandbox" }
-    const ctx = setup(() => state.toggles++, { enabled: () => false })
-    const textarea = {
-      value: state.text,
-      selectionStart: state.text.length,
-      setSelectionRange: () => {},
-    } as unknown as HTMLTextAreaElement
-    const event = {
-      key: "Enter",
-      isComposing: false,
-      preventDefault: () => {},
-    } as unknown as KeyboardEvent
-
-    ctx.slash.onInput(state.text, state.text.length)
-    const handled = ctx.slash.onKeyDown(event, textarea, (text) => (state.text = text))
-
-    expect(handled).toBe(true)
-    expect(state.toggles).toBe(0)
-    expect(state.text).toBe("/sandbox")
-    expect(textarea.value).toBe("/sandbox")
-    ctx.dispose()
-  })
-
-  it("hides the client and server sandbox command when excluded", () => {
-    const state = { hidden: true }
-    const ctx = setup(() => {}, {
-      exclude: () => (state.hidden ? new Set(["sandbox"]) : new Set()),
-    })
-
-    ctx.slash.onInput("/sandbox", 8)
-    ctx.fire({
-      type: "commandsLoaded",
-      commands: [{ name: "sandbox", description: "Server sandbox command", hints: [] }],
-    })
-    expect(ctx.slash.results()).toEqual([])
-
-    state.hidden = false
-    expect(ctx.slash.results().map((command) => command.name)).toEqual(["sandbox"])
-    expect(ctx.slash.results()[0]?.description).toBe("Toggle sandbox")
+    const names = new Set(ctx.slash.commands().map((command) => command.name))
+    expect(names.has("memory")).toBe(false)
+    expect(names.has("remote")).toBe(false)
+    expect(names.has("sandbox")).toBe(false)
     ctx.dispose()
   })
 
@@ -467,7 +337,8 @@ describe("skill entries in the slash menu", () => {
 })
 
 describe("slash command keyboard selection", () => {
-  it.each(["sandbox", "verify"])("leaves Shift+Tab unhandled with /%s selected", (name) => {
+  it("leaves Shift+Tab unhandled with /verify selected", () => {
+    const name = "verify"
     const draft = `/${name} keep this draft`
     const state = { text: draft, prevented: 0, selected: 0, toggles: 0 }
     const ctx = setup(() => state.toggles++)
@@ -704,12 +575,12 @@ describe("select", () => {
     ctx.dispose()
   })
 
-  it("preserves trailing text for memory commands when cursor moves", () => {
+  it("preserves trailing text for review commands when cursor moves", () => {
     let currentText = ""
     const ctx = setup(() => {})
 
-    // Type /memory rem: matches memory pattern, slashEnd set to end of text
-    const typed = "/memory rem"
+    // Type /review unc: matches review pattern, slashEnd set to end of text
+    const typed = "/review unc"
     ctx.slash.onInput(typed, typed.length)
 
     // Simulate user moving cursor (no onInput fires for arrow keys)
@@ -723,15 +594,13 @@ describe("select", () => {
       currentText = text
     }
 
-    // Find the memory remember command (nested, no action)
-    const remembered = ctx.slash.results().find((c) => c.name === "memory remember")
-    expect(remembered).toBeDefined()
+    const uncommitted = ctx.slash.results().find((c) => c.name === "review uncommitted")
+    expect(uncommitted).toBeDefined()
 
-    ctx.slash.select(remembered!, textarea, setText)
+    ctx.slash.select(uncommitted!, textarea, setText)
 
-    // Trailing text from slashEnd (end of typed text) — empty — should be preserved correctly
-    expect(currentText).toBe("/memory remember ")
-    expect(textarea.value).toBe("/memory remember ")
+    expect(currentText).toBe("/review uncommitted ")
+    expect(textarea.value).toBe("/review uncommitted ")
     ctx.dispose()
   })
 
@@ -739,10 +608,10 @@ describe("select", () => {
     let currentText = ""
     const ctx = setup(() => {})
 
-    ctx.slash.onInput("/mem", 4)
+    ctx.slash.onInput("/rev", 4)
 
     const textarea = {
-      value: "/mem",
+      value: "/rev",
       selectionStart: 4,
       setSelectionRange: () => {},
       focus: () => {},
@@ -751,17 +620,17 @@ describe("select", () => {
       currentText = text
     }
 
-    const memory = ctx.slash.results().find((c) => c.name === "memory")
-    expect(memory).toBeDefined()
-    ctx.slash.select(memory!, textarea, setText)
-    expect(currentText).toBe("/memory ")
-    expect(textarea.value).toBe("/memory ")
+    const review = ctx.slash.results().find((c) => c.name === "review")
+    expect(review).toBeDefined()
+    ctx.slash.select(review!, textarea, setText)
+    expect(currentText).toBe("/review ")
+    expect(textarea.value).toBe("/review ")
 
-    const remember = ctx.slash.results().find((c) => c.name === "memory remember")
-    expect(remember).toBeDefined()
-    ctx.slash.select(remember!, textarea, setText)
-    expect(currentText).toBe("/memory remember ")
-    expect(textarea.value).toBe("/memory remember ")
+    const uncommitted = ctx.slash.results().find((c) => c.name === "review uncommitted")
+    expect(uncommitted).toBeDefined()
+    ctx.slash.select(uncommitted!, textarea, setText)
+    expect(currentText).toBe("/review uncommitted ")
+    expect(textarea.value).toBe("/review uncommitted ")
     ctx.dispose()
   })
 
@@ -780,22 +649,22 @@ describe("select", () => {
       currentText = text
     }
 
-    textarea.value = "/memhello"
+    textarea.value = "/revhello"
     textarea.selectionStart = 4
-    ctx.slash.onInput("/memhello", 4)
+    ctx.slash.onInput("/revhello", 4)
 
-    const memory = ctx.slash.results().find((c) => c.name === "memory")
-    expect(memory).toBeDefined()
-    ctx.slash.select(memory!, textarea, setText)
-    expect(textarea.value).toBe("/memory hello")
-    expect(textarea.selectionStart).toBe("/memory ".length)
+    const review = ctx.slash.results().find((c) => c.name === "review")
+    expect(review).toBeDefined()
+    ctx.slash.select(review!, textarea, setText)
+    expect(textarea.value).toBe("/review hello")
+    expect(textarea.selectionStart).toBe("/review ".length)
 
-    const rebuild = ctx.slash.results().find((c) => c.name === "memory rebuild")
-    expect(rebuild).toBeDefined()
-    ctx.slash.select(rebuild!, textarea, setText)
+    const quick = ctx.slash.results().find((c) => c.name === "review quick")
+    expect(quick).toBeDefined()
+    ctx.slash.select(quick!, textarea, setText)
 
-    expect(textarea.value).toBe("/memory rebuild hello")
-    expect(textarea.selectionStart).toBe("/memory rebuild ".length)
+    expect(textarea.value).toBe("/review quick hello")
+    expect(textarea.selectionStart).toBe("/review quick ".length)
     ctx.dispose()
   })
 })

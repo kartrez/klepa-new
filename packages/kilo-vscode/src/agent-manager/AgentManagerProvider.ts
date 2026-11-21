@@ -45,7 +45,7 @@ import { createRunController, createScriptTerminalRuntime, clearScriptTerminals 
 import { forkSession } from "./fork-session"
 import { AgentManagerVisiblePresence } from "./am-visible-presence"
 import { continueInWorktree } from "./continue-in-worktree"
-import { createContinuationController, startContinuation } from "./continue-cloud"
+import { createContinuationController } from "./continue-cloud"
 import { stateMessage, uiMessage, type MessageRoutingDeps } from "./message-routing"
 import { WorktreeDiffController } from "./worktree-diff-controller"
 import { createWorktreeActivity } from "./worktree-activity"
@@ -378,35 +378,9 @@ export class AgentManagerProvider implements Disposable {
   private log(...args: unknown[]) {
     this.outputChannel.appendLine(`${new Date().toISOString()} ${formatLog(args)}`)
   }
-  /** Continue this worktree in Cloud: host-owned selection, one key per retry, explain repeat clicks. */
-  private async onContinueInCloud(m: { worktreeId: string }): Promise<null> {
-    const state = this.getStateManager()
-    const worktree = state?.getWorktree(m.worktreeId)
-    if (!state || !worktree) {
-      this.host.showError(`Worktree ${m.worktreeId} was not found`)
-      return null
-    }
-    if (this.continuation.active()) {
-      this.host.showError("Continue in Cloud is already running. Wait for it to finish.")
-      return null
-    }
-    return startContinuation(
-      {
-        state,
-        activeSessionId: this.activeSessionId,
-        projectId: this.context?.id,
-        getClient: () => this.connectionService.getClient(),
-        choose: (kind, message, actions) => this.host.choose(kind, message, actions),
-        openUrl: (url) => this.host.openExternal(url),
-        copy: (text) => void this.host.copyToClipboard(text),
-        error: (message) => this.host.showError(message),
-        capture: (event, props) => this.host.capture(event, props),
-        log: (...args) => this.log(...args),
-        onOperation: (_worktreeId, operationKey) => this.continuation.setKey(operationKey),
-        dispatch: (worktreeId, directory, run) => this.continuation.dispatch(worktreeId, directory, run),
-      },
-      m.worktreeId,
-    )
+  /** Continue in Cloud is disabled in Klepa AI VS Code. */
+  private async onContinueInCloud(_m: { worktreeId: string }): Promise<null> {
+    return null
   }
   public openPanel(preserveFocus?: boolean): void {
     if (this.panel) {

@@ -102,11 +102,11 @@ export const dict = {
   "agentManager.orphans.sizeUnknown": "unknown",
   "agentManager.orphans.dialogTitle": "Leftover worktree folders",
   "agentManager.orphans.helpIntro":
-    "Kilo keeps every worktree it creates inside the .kilo/worktrees folder of this repository. The folders below are in that folder, but git does not list any of them as a worktree, so nothing is using them anymore.",
+    "Klepa AI keeps every worktree it creates inside the .kilo/worktrees folder of this repository. The folders below are in that folder, but git does not list any of them as a worktree, so nothing is using them anymore.",
   "agentManager.orphans.helpCheckout":
     "A folder flagged as containing a git checkout still has a .git entry inside and may hold uncommitted work. Those are left unselected, so open one and check it before you delete it.",
   "agentManager.orphans.helpCauses":
-    "Leftovers usually come from a deletion that was interrupted, a worktree removed outside Kilo, or a tool that wrote into the folder after it was removed. Deletions that are still running are not listed here.",
+    "Leftovers usually come from a deletion that was interrupted, a worktree removed outside Klepa AI, or a tool that wrote into the folder after it was removed. Deletions that are still running are not listed here.",
   "agentManager.orphans.helpDelete":
     "Deleting removes the selected folders from disk for good, without going through the Trash. No branch and no active worktree is touched. Sizes are what each folder takes up on disk right now.",
   "agentManager.orphans.helpMore": "Show more",
@@ -318,7 +318,7 @@ export const dict = {
   "agentManager.review.sendToChat": "Send to chat",
   "agentManager.pr.comment.title": "Comments",
   "agentManager.pr.copyLink": "Copy PR link",
-  "agentManager.pr.checks.fix": "Fix with Kilo",
+  "agentManager.pr.checks.fix": "Fix with Klepa AI",
   "agentManager.pr.checks.terminal": "Send failures to terminal",
   "agentManager.pr.checks.feedback": "CI feedback",
   "agentManager.pr.checks.title": "Checks",
@@ -349,8 +349,8 @@ export const dict = {
   "agentManager.pr.checks.tally.skipped.other": "{{count}} skipped",
   "agentManager.pr.checks.tally.success.one": "{{count}} passed",
   "agentManager.pr.checks.tally.success.other": "{{count}} passed",
-  "agentManager.pr.fixWithKilo": "Fix with Kilo",
-  "agentManager.pr.fixWithKiloCount": "Fix {{count}} with Kilo",
+  "agentManager.pr.fixWithKilo": "Fix with Klepa AI",
+  "agentManager.pr.fixWithKiloCount": "Fix {{count}} with Klepa AI",
   "agentManager.pr.comment.unresolvedCount": "{{count}} unresolved",
   "agentManager.pr.comment.unresolvedThread": "{{count}} unresolved review thread",
   "agentManager.pr.comment.unresolvedThreads": "{{count}} unresolved review threads",
@@ -404,7 +404,7 @@ export const dict = {
   "agentManager.pr.timeline.earlier": "Show earlier activity",
   "agentManager.pr.conversation.dismiss": "Dismiss",
   "agentManager.pr.conversation.restore": "Restore",
-  "agentManager.pr.conversation.sendAll": "Fix {{count}} with Kilo",
+  "agentManager.pr.conversation.sendAll": "Fix {{count}} with Klepa AI",
   "agentManager.pr.conversation.sendAllToTerminal": "Send {{count}} to terminal",
   "agentManager.pr.summary.title": "PR Summary",
   "agentManager.pr.summary.checksPassing": "All checks passing",
@@ -432,7 +432,7 @@ export const dict = {
   "agentManager.pr.merge.draft": "Draft pull request",
   "agentManager.pr.merge.checking": "Checking mergeability",
   "agentManager.pr.merge.ready": "Ready to merge",
-  "agentManager.pr.merge.fix": "Fix with Kilo",
+  "agentManager.pr.merge.fix": "Fix with Klepa AI",
   "agentManager.pr.merge.update": "Update branch",
   "agentManager.pr.merge.button": "{{method}}",
   "agentManager.pr.merge.autoButton": "Enable auto-merge",
@@ -527,7 +527,7 @@ export const dict = {
   "agentManager.intro.title": "Parallel tasks. Separate worktrees.",
   "agentManager.intro.subtitle":
     "A worktree is a separate folder and branch for a task. Your agents can work side by side without editing the same files.",
-  "agentManager.intro.graph.agent": "Kilo agent",
+  "agentManager.intro.graph.agent": "Klepa AI agent",
   "agentManager.intro.graph.pr": "Pull request",
   "agentManager.intro.stage1.title": "Your repository",
   "agentManager.intro.stage1.text": "Local files stay unchanged",
@@ -539,9 +539,9 @@ export const dict = {
   "agentManager.intro.stage4.title": "Bring changes back when you are ready",
   "agentManager.intro.stage4.text":
     "Ask the agent in each worktree to open a pull request. Or use Apply in the diff panel to copy changes to Local.",
-  "agentManager.intro.updateTitle": "Resolve conflicts with Kilo",
+  "agentManager.intro.updateTitle": "Resolve conflicts with Klepa AI",
   "agentManager.intro.updateText":
-    "Before applying changes to Local or merging a pull request, run /update-from-base in that worktree's session. Kilo merges the latest base changes and resolves conflicts there first.",
+    "Before applying changes to Local or merging a pull request, run /update-from-base in that worktree's session. Klepa AI merges the latest base changes and resolves conflicts there first.",
   "agentManager.intro.prDetection":
     "PR badges update automatically for each worktree branch (GitHub CLI sign-in required).",
   "agentManager.intro.checksRunning": "Checks running",
@@ -556,12 +556,12 @@ export const dict = {
     "Run tasks in parallel with worktrees, delegate work and follow every agent from one place.",
   "agentManager.splash.hide": "Hide",
   "agentManager.splash.hideLabel": "Hide Agent Manager introduction",
-  "agentManager.splash.title": "Put a fleet of Kilo agents to work.",
+  "agentManager.splash.title": "Put a fleet of Klepa AI agents to work.",
   "agentManager.splash.subtitle":
     "Tackle several tasks in parallel with worktrees, delegate work, follow every agent's progress, and keep multiple work streams moving from one place.",
   "agentManager.splash.hint": "or",
   "agentManager.splash.proceed": "proceed locally in the message box below",
-  "agentManager.splash.folded.title": "Put a fleet of Kilo agents to work",
+  "agentManager.splash.folded.title": "Put a fleet of Klepa AI agents to work",
   "agentManager.splash.folded.note": "Cross-stack features, delegation, model comparisons and more",
   "agentManager.splash.showExamples": "Show examples",
   "agentManager.splash.examples.crossStack.tag": "Cross-stack",
@@ -592,7 +592,7 @@ export const dict = {
   "agentManager.splash.examples.compare.feature1.name": "Multi-version runs",
   "agentManager.splash.examples.compare.feature1.text": "Run the same task as several versions at once.",
   "agentManager.splash.examples.compare.feature2.name": "Mix models",
-  "agentManager.splash.examples.compare.feature2.text": "Compare Kilo Auto, Claude and GPT on identical work.",
+  "agentManager.splash.examples.compare.feature2.text": "Compare Klepa, Claude and GPT models on identical work.",
   "agentManager.splash.examples.compare.feature3.name": "Keep the best",
   "agentManager.splash.examples.compare.feature3.text": "Review real diffs side by side, keep one, discard the rest.",
 }

@@ -19,10 +19,8 @@ const generated = await import("./generate.ts")
 import { Script } from "@opencode-ai/script"
 import pkg from "../package.json"
 // kilocode_change start
-import { stageBubblewrap } from "./kilocode/bubblewrap"
+// Klepa disables sandbox helpers, codebase indexing tree-sitter/worker, and kilo-console embedding in VS Code CLI builds.
 import { LanceDBRuntime } from "../src/kilocode/lancedb"
-import { KiloSandboxWorker } from "./kilocode/kilo-sandbox-worker"
-import { KiloSandboxNetwork } from "./kilocode/kilo-sandbox-network"
 import * as KiloSbom from "./kilocode/sbom"
 import * as KiloRelease from "../../../script/kilocode/release"
 import * as KiloBun from "../../../script/kilocode/bun"
@@ -232,11 +230,7 @@ const targets = singleFlag
 
 // kilocode_change start
 await $`rm -rf dist`
-const [kiloConsoleDist, kiloSandboxWorker, kiloSandboxNetwork] = await Promise.all([
-  buildKiloConsole(),
-  KiloSandboxWorker.bundle(),
-  KiloSandboxNetwork.bundle(),
-])
+// Klepa skips buildKiloConsole, KiloSandboxWorker, and KiloSandboxNetwork.
 // kilocode_change end
 
 const binaries: Record<string, string> = {}
@@ -269,17 +263,12 @@ for (const item of targets) {
     item.avx2 !== false
       ? process.execPath
       : await KiloBun.stage(item)
-  const bwrap =
-    item.os === "linux" && process.env.KILO_SKIP_BUNDLED_BWRAP !== "1"
-      ? await stageBubblewrap(item.arch, path.resolve(dir, `dist/${name}/bin`))
-      : undefined
   // kilocode_change end
 
   const workerPath = "./src/cli/tui/worker.ts"
   const treeSitterWorkerPath = "opentui-tree-sitter-worker.js"
   // kilocode_change start
   const sessionExportWorkerPath = "./src/kilocode/session-export/worker.ts"
-  const indexingWorkerPath = "./src/kilocode/indexing-worker.ts"
   // kilocode_change end
 
   const bunfsRoot = item.os === "win32" ? "B:/~BUN/root/" : "/$bunfs/root/"
@@ -316,9 +305,9 @@ for (const item of targets) {
       // kilocode_change end
       windows: {},
     },
-    // kilocode_change start - packages/app was removed; no embedded web UI
+    // kilocode_change start - packages/app was removed; no embedded web UI or indexing/sandbox workers in Klepa
     files: { [treeSitterWorkerPath]: treeSitterWorker },
-    entrypoints: ["./src/index.ts", workerPath, treeSitterWorkerPath, sessionExportWorkerPath, indexingWorkerPath],
+    entrypoints: ["./src/index.ts", workerPath, treeSitterWorkerPath, sessionExportWorkerPath],
     // kilocode_change end
     define: {
       FFF_LIBC: JSON.stringify(item.abi === "musl" ? "musl" : "gnu"),
@@ -328,15 +317,15 @@ for (const item of targets) {
       KILO_WORKER_PATH: workerPath,
       // kilocode_change start
       KILO_SESSION_EXPORT_WORKER_PATH: sessionExportWorkerPath,
-      KILO_INDEXING_WORKER_PATH: indexingWorkerPath,
-      KILO_SANDBOX_MUTATION_WORKER_PATH: JSON.stringify(KiloSandboxWorker.filename),
-      KILO_SANDBOX_NETWORK_RELAY_PATH: item.os === "linux" ? JSON.stringify(KiloSandboxNetwork.relay) : "undefined",
-      KILO_SANDBOX_SECCOMP_PATH: item.os === "linux" ? JSON.stringify(KiloSandboxNetwork.seccomp) : "undefined",
+      KILO_INDEXING_WORKER_PATH: "undefined",
+      KILO_SANDBOX_MUTATION_WORKER_PATH: "undefined",
+      KILO_SANDBOX_NETWORK_RELAY_PATH: "undefined",
+      KILO_SANDBOX_SECCOMP_PATH: "undefined",
       // kilocode_change end
       KILO_CHANNEL: `'${Script.channel}'`,
       KILO_LIBC: item.os === "linux" ? `'${item.abi ?? "glibc"}'` : "",
       // kilocode_change start
-      KILO_BWRAP_SHA256: bwrap ? `'${bwrap}'` : "undefined",
+      KILO_BWRAP_SHA256: "undefined",
       KILO_BUILD_KIND: Script.release ? `'release'` : `'source'`,
       // kilocode_change end
       ...(item.os === "linux" ? { "process.env.OPENTUI_LIBC": JSON.stringify(item.abi ?? "glibc") } : {}),
@@ -344,12 +333,7 @@ for (const item of targets) {
   })
 
   // kilocode_change start
-  await copyTreeSitterWasms(path.resolve(dir, `dist/${name}/bin`))
-  await copyKiloConsole(kiloConsoleDist, path.resolve(dir, `dist/${name}/bin`))
-  await KiloSandboxWorker.copy(kiloSandboxWorker, path.resolve(dir, `dist/${name}/bin`))
-  if (item.os === "linux") {
-    await KiloSandboxNetwork.copy(kiloSandboxNetwork, path.resolve(dir, `dist/${name}/bin`), item.arch)
-  }
+  // Klepa skips copyTreeSitterWasms, copyKiloConsole, KiloSandboxWorker, and KiloSandboxNetwork.
 
   // Preserve the loader from Nix's already-patched native runtime.
   if (item.os === "linux" && runtime !== process.execPath) {
@@ -389,15 +373,7 @@ for (const item of targets) {
   await $`rm -rf ./dist/${name}/bin/tui`
   // kilocode_change start
   if (item.os === "linux") {
-    const content = await Promise.all([
-      Bun.file(path.resolve(dir, "../../LICENSE")).text(),
-      Bun.file(path.resolve(dir, `dist/${name}/bin/licenses/sandbox-runtime/LICENSE`)).text(),
-      ...(bwrap
-        ? ["NOTICE", "COPYING", "MUSL-COPYRIGHT"].map((file) =>
-            Bun.file(path.resolve(dir, `dist/${name}/bin/licenses/bubblewrap/${file}`)).text(),
-          )
-        : []),
-    ])
+    const content = [await Bun.file(path.resolve(dir, "../../LICENSE")).text()]
     await Bun.write(`dist/${name}/LICENSE`, content.join("\n\n---\n\n"))
   }
   // kilocode_change end

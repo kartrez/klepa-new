@@ -60,7 +60,7 @@ const AboutKiloCodeTab: Component<AboutKiloCodeTabProps> = (props) => {
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    a.download = "kilo-settings.json"
+    a.download = "klepa-settings.json"
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -355,13 +355,6 @@ const AboutKiloCodeTab: Component<AboutKiloCodeTabProps> = (props) => {
         <div style={{ display: "flex", gap: "8px", "flex-wrap": "wrap" }}>
           <Button variant="primary" size="small" onClick={() => vscode.postMessage({ type: "resetAllSettings" })}>
             {language.t("settings.aboutKiloCode.resetSettings.button")}
-          </Button>
-          <Button
-            variant="secondary"
-            size="small"
-            onClick={() => vscode.postMessage({ type: "resetReadNotifications" })}
-          >
-            {language.t("settings.aboutKiloCode.resetSettings.notificationsButton")}
           </Button>
         </div>
       </div>

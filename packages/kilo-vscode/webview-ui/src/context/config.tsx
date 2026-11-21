@@ -111,6 +111,14 @@ export const ConfigProvider: ParentComponent = (props) => {
     autocomplete: false,
     backgroundSubagents: false,
     speechToText: false,
+    marketplace: false,
+    remoteControl: false,
+    integratedBrowser: false,
+    projectMemory: false,
+    swarm: false,
+    codeMode: false,
+    caffeination: false,
+    nativeNotebookTools: false,
   })
   const [loading, setLoading] = createSignal(true)
   const [draft, setDraft] = createSignal<Partial<Config>>({})

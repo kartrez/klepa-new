@@ -185,7 +185,7 @@ export class ProjectContext {
           log,
           git,
           undefined,
-          () => (this.deps.worktreePool?.() === false ? 0 : 1),
+          () => (this.deps.worktreePool?.() === true ? 1 : 0),
           this.deps.poolHome,
         ))
     )(this.root, (msg) => this.deps.log(`[WorktreeManager] ${msg}`), this.deps.git)

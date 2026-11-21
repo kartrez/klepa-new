@@ -1,4 +1,3 @@
-import { hasIndexingPlugin } from "@kilocode/kilo-indexing/detect"
 import type { KiloClient } from "@kilocode/sdk/v2"
 import * as vscode from "vscode"
 
@@ -14,20 +13,36 @@ export type Features = {
   autocomplete: boolean
   backgroundSubagents: boolean
   speechToText: boolean
+  marketplace: boolean
+  remoteControl: boolean
+  integratedBrowser: boolean
+  projectMemory: boolean
+  swarm: boolean
+  codeMode: boolean
+  caffeination: boolean
+  nativeNotebookTools: boolean
 }
 
 export function configFeatures(
-  config?: ConfigLike | null,
-  backgroundSubagents = false,
-  remote = !!vscode.env.remoteName,
+  _config?: ConfigLike | null,
+  _backgroundSubagents = false,
+  _remote = !!vscode.env.remoteName,
 ): Features {
+  // Klepa AI VS Code keeps only core chat/agent features enabled.
   return {
-    indexing: hasIndexingPlugin(config?.plugin ?? []),
-    sandboxControls: process.platform !== "win32",
-    // Klepa chat API has no FIM endpoint; inline autocomplete needs Codestral/Mercury via Kilo Gateway.
+    indexing: false,
+    sandboxControls: false,
     autocomplete: false,
-    backgroundSubagents,
-    speechToText: !remote,
+    backgroundSubagents: false,
+    speechToText: false,
+    marketplace: false,
+    remoteControl: false,
+    integratedBrowser: false,
+    projectMemory: false,
+    swarm: false,
+    codeMode: false,
+    caffeination: false,
+    nativeNotebookTools: false,
   }
 }
 

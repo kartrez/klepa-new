@@ -16,8 +16,8 @@ export namespace KiloCliBootstrapRuntime {
     return config.runPromise((service) => service.getGlobal())
   }
 
-  export function getAuth() {
-    return auth.runPromise((service) => service.get("kilo"))
+  export function getAuth(providerID = "kilo") {
+    return auth.runPromise((service) => service.get(providerID))
   }
 
   export function setAuth(info: Auth.Info) {

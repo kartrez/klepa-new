@@ -367,11 +367,20 @@ const ConfigWrapper: ParentComponent<{
       }
 
       return {
-        indexing: props.features?.indexing ?? hasIndexingPlugin(config.plugin ?? []),
-        sandboxControls: props.features?.sandboxControls ?? false,
-        autocomplete: props.features?.autocomplete ?? false,
-        backgroundSubagents: props.features?.backgroundSubagents ?? false,
-        speechToText: props.features?.speechToText ?? true,
+        indexing: hasIndexingPlugin(config.plugin ?? []),
+        sandboxControls: false,
+        autocomplete: false,
+        backgroundSubagents: false,
+        speechToText: false,
+        marketplace: false,
+        remoteControl: false,
+        integratedBrowser: false,
+        projectMemory: false,
+        swarm: false,
+        codeMode: false,
+        caffeination: false,
+        nativeNotebookTools: false,
+        ...props.features,
       }
     })
 
